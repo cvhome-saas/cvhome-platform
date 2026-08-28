@@ -44,6 +44,35 @@ jobs:
           pip install --quiet cfn-lint
           cfn-lint bootstrap/bootstrap.yaml
 
+      # Fail here, with instructions, rather than letting configure-aws-credentials
+      # report an empty role ARN. There is nothing to debug in the workflow: the trust
+      # relationship simply has not been created yet.
+      - name: Check the publish role exists
+        env:
+          ROLE: ${{ secrets.AWS_TEMPLATE_PUBLISH_ROLE_ARN }}
+        run: |
+          if [ -z "${ROLE:-}" ]; then
+            {
+              echo "### Launch template not published"
+              echo ""
+              echo "\`AWS_TEMPLATE_PUBLISH_ROLE_ARN\` is not set, so this workflow cannot"
+              echo "assume a role to write the template to S3. The Launch Stack button in"
+              echo "README.md therefore still points at the previously published template."
+              echo ""
+              echo "To fix it once, per AWS account:"
+              echo ""
+              echo "1. Deploy \`bootstrap/github-oidc.yaml\`. It creates the GitHub OIDC"
+              echo "   provider and two roles, one for publishing and one for plan."
+              echo "2. Copy its \`TemplatePublishRoleArn\` output into the repository secret"
+              echo "   \`AWS_TEMPLATE_PUBLISH_ROLE_ARN\`, and \`PlanRoleArn\` into"
+              echo "   \`AWS_PLAN_ROLE_ARN\`."
+              echo "3. Re-run this workflow."
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            echo "::error::AWS_TEMPLATE_PUBLISH_ROLE_ARN is not set. Deploy bootstrap/github-oidc.yaml and add its outputs as repository secrets - see the job summary."
+            exit 1
+          fi
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
