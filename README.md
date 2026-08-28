@@ -239,9 +239,12 @@ Most platform work touches no service and has no counterpart branch, which is wh
 fallback is for — and on `main` it asks the question that matters: does released
 infrastructure match released application code?
 
-Reading the application repo needs `APP_REPO_TOKEN`. Without it the job fails rather
-than skipping: a catalog change nothing verified is how four services ended up with no
-infrastructure.
+The application repository is public, so the automatic `GITHUB_TOKEN` reads it — there
+is no secret to configure, and the check runs on pull requests from forks like every
+other job here. Set `APP_REPO_TOKEN` only if the repository is ever made private; the
+workflow prefers it when present. If the repository cannot be read at all the job fails
+rather than skipping, because a catalog change nothing verified is how four services
+ended up with no infrastructure.
 
 **Applies never happen from GitHub Actions.** They happen in CodeBuild. The previous
 setup applied from both, with two different project ids, against two different state

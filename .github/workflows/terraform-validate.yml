@@ -85,7 +85,11 @@ jobs:
       - name: Resolve the application branch
         id: app
         env:
-          GH_TOKEN: ${{ secrets.APP_REPO_TOKEN }}
+          # The application repository is public, so the automatic GITHUB_TOKEN reads
+          # it — no secret to configure, and the job works on pull requests from forks.
+          # APP_REPO_TOKEN is honoured if set, so nothing breaks the day the repo is
+          # made private.
+          GH_TOKEN: ${{ secrets.APP_REPO_TOKEN || github.token }}
           APP_REPO: ${{ vars.APP_REPO || 'cvhome-saas/cvhome' }}
           # On a pull request, ref_name is the merge ref (123/merge), so the source
           # branch has to come from head_ref instead.
@@ -93,11 +97,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::error::APP_REPO_TOKEN is not available, so the catalog cannot be" \
-                 "compared against $APP_REPO. This check does not pass vacuously:" \
-                 "a catalog change that nothing verified is how four services ended" \
-                 "up with no infrastructure."
+          # Fail loudly if the application repository cannot be read at all — renamed,
+          # or made private without APP_REPO_TOKEN being set. This check must never
+          # pass vacuously: a catalog change that nothing verified is how four services
+          # ended up with no infrastructure.
+          if ! default_branch="$(gh api "repos/${APP_REPO}" --jq .default_branch 2>/dev/null)"; then
+            echo "::error::Cannot read ${APP_REPO}. If it has been made private, set the" \
+                 "APP_REPO_TOKEN secret to a token that can read it."
             exit 1
           fi
 
@@ -105,7 +111,7 @@ jobs:
             ref="$CANDIDATE"
             why="matching branch"
           else
-            ref="$(gh api "repos/${APP_REPO}" --jq .default_branch)"
+            ref="$default_branch"
             why="no branch named '${CANDIDATE}' in ${APP_REPO}; using its default"
           fi
 
@@ -119,7 +125,7 @@ jobs:
           repository: ${{ steps.app.outputs.repo }}
           ref: ${{ steps.app.outputs.ref }}
           path: .app
-          token: ${{ secrets.APP_REPO_TOKEN }}
+          token: ${{ secrets.APP_REPO_TOKEN || github.token }}
 
       - run: python3 scripts/check-catalog-drift.py --app-repo .app
 
