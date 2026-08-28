@@ -221,23 +221,28 @@ CI runs all of these on every push and pull request
 (`.github/workflows/terraform-validate.yml`). Only the plan job assumes an AWS role,
 via OIDC; the rest need no cloud credentials.
 
-The drift check compares against **the same branch name in the application repo when
-one exists**, and the application's default branch otherwise:
+The drift check picks the application branch like this:
 
-| this repo | compared against |
-|---|---|
-| `main` | `cvhome@main` |
-| `develop` | `cvhome@develop` |
-| `feat/add-search` | `cvhome@feat/add-search` |
-| `feat/tighten-sg` (no counterpart) | `cvhome`'s default branch |
+| this repo | compared against | why |
+|---|---|---|
+| `main` | `cvhome@develop` | trunk maps to trunk |
+| `develop` | `cvhome@develop` | matching branch |
+| `feat/add-search` | `cvhome@feat/add-search` | matching branch |
+| `feat/tighten-sg` | `cvhome@develop` | no counterpart branch |
 
-A new service and the catalog entry describing it are one change split across two
-repositories, normally developed under the same branch name. Comparing a feature branch
-here against the application's default branch would report the new service as "in the
-catalog but not in common-config.yml" and fail every build until both sides merged.
-Most platform work touches no service and has no counterpart branch, which is what the
-fallback is for — and on `main` it asks the question that matters: does released
-infrastructure match released application code?
+**The two repositories do not share a trunk name.** This repo's trunk is `main`; the
+application's living trunk is `develop`. Its `main` is well behind — it still carries
+`control-plane` and `seller-ui`, the names this platform exists to replace — so matching
+purely on branch name would compare current infrastructure against a stale application
+and fail forever.
+
+Off-trunk, the same branch name wins when it exists: a new service and the catalog entry
+describing it are one change split across two repositories, normally developed under one
+name. Everything else falls back to the application trunk, which is the common case,
+since most platform work touches no service at all.
+
+Set the `APP_REF` repository variable to move the target. When the application merges
+`develop` into `main`, that is a one-line change with no edit to the workflow.
 
 `cvhome` is public, so this needs **no secret and no login**. Actions injects
 `github.token` into every run and it can read any public repository, which is also why
