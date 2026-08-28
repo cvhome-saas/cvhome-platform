@@ -85,11 +85,15 @@ jobs:
       - name: Resolve the application branch
         id: app
         env:
-          # The application repository is public, so the automatic GITHUB_TOKEN reads
-          # it — no secret to configure, and the job works on pull requests from forks.
-          # APP_REPO_TOKEN is honoured if set, so nothing breaks the day the repo is
-          # made private.
-          GH_TOKEN: ${{ secrets.APP_REPO_TOKEN || github.token }}
+          # cvhome is public, so there is no secret to configure and nothing to log in
+          # to. github.token is not a credential anyone creates: Actions injects it into
+          # every run, and it can read any public repository.
+          #
+          # It is used rather than an unauthenticated call only for rate limits —
+          # anonymous API requests are capped at 60/hour per IP, and GitHub-hosted
+          # runners share addresses, so an anonymous check would fail intermittently
+          # for reasons that have nothing to do with the catalog.
+          GH_TOKEN: ${{ github.token }}
           APP_REPO: ${{ vars.APP_REPO || 'cvhome-saas/cvhome' }}
           # On a pull request, ref_name is the merge ref (123/merge), so the source
           # branch has to come from head_ref instead.
@@ -97,13 +101,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Fail loudly if the application repository cannot be read at all — renamed,
-          # or made private without APP_REPO_TOKEN being set. This check must never
-          # pass vacuously: a catalog change that nothing verified is how four services
-          # ended up with no infrastructure.
+          # Fail loudly if the application repository cannot be read at all: renamed,
+          # or no longer public. This check must never pass vacuously — a catalog change
+          # that nothing verified is how four services ended up with no infrastructure.
           if ! default_branch="$(gh api "repos/${APP_REPO}" --jq .default_branch 2>/dev/null)"; then
-            echo "::error::Cannot read ${APP_REPO}. If it has been made private, set the" \
-                 "APP_REPO_TOKEN secret to a token that can read it."
+            echo "::error::Cannot read ${APP_REPO}. If it is no longer public, give this" \
+                 "workflow a token that can read it."
             exit 1
           fi
 
@@ -125,7 +128,7 @@ jobs:
           repository: ${{ steps.app.outputs.repo }}
           ref: ${{ steps.app.outputs.ref }}
           path: .app
-          token: ${{ secrets.APP_REPO_TOKEN || github.token }}
+          # No token: checkout defaults to github.token, which reads public repos.
 
       - run: python3 scripts/check-catalog-drift.py --app-repo .app
 
