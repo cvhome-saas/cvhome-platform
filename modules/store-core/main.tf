@@ -137,6 +137,16 @@ locals {
         svc.runtime == "spring" ? concat(local.common_spring_env, local.otel_spring_env) : [],
         svc.runtime == "spring" ? local.edge_scheme_env : [],
         svc.runtime == "spring" ? local.spg_env : [],
+
+        # The bind port, stated rather than inferred. common-config.yml derives
+        # server.port from com.asrevo.cvhome.services.<own name>.port, and
+        # edge_scheme_env rewrites that same entry to 443 so other services address
+        # this one through the edge. One key cannot carry both meanings: the container
+        # runs as a non-root buildpack user, so bind(443) fails with EACCES and the
+        # task never starts. SERVER_PORT sets server.port directly and outranks the
+        # placeholder, which leaves the edge value doing only the job it was added for.
+        svc.runtime == "spring" ? [{ name = "SERVER_PORT", value = tostring(svc.port) }] : [],
+
         svc.runtime == "node" ? concat(local.node_env, [{ name = "OTEL_SERVICE_NAME", value = name }]) : [],
         try(svc.database, false) ? local.database_env : [],
         try(svc.needs_pod_list, false) ? local.pod_list_env : [],
