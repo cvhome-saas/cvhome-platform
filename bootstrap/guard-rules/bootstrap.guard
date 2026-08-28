@@ -1,0 +1,111 @@
+# Policy checks for the bootstrap template.
+#
+# These encode the security decisions from the architecture proposal as enforceable
+# rules, so a future edit cannot quietly reintroduce what the legacy template did.
+# Run locally:  cfn-guard validate -d bootstrap/bootstrap.yaml -r bootstrap/guard-rules
+
+# Filter in the query, not with an inner `when`: a `when ... exists` guard over a
+# mixed set makes the whole rule SKIP, which reads as green while checking nothing.
+let roles_with_managed_policies = Resources.*[
+    Type == 'AWS::IAM::Role'
+    Properties.ManagedPolicyArns exists
+]
+let roles_with_inline_policies = Resources.*[
+    Type == 'AWS::IAM::Role'
+    Properties.Policies exists
+]
+let s3_buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]
+
+#
+# The legacy deploy role attached PowerUserAccess (bootstrap.yaml:992) alongside an
+# inline iam:*. Between them, a compromised build could do almost anything in the
+# account.
+#
+rule no_broad_managed_policies when %roles_with_managed_policies !empty {
+    %roles_with_managed_policies.Properties.ManagedPolicyArns[*] != /PowerUserAccess/
+    <<
+        violation: an IAM role attaches PowerUserAccess.
+        fix: grant the specific actions the role needs, as inline statements.
+    >>
+
+    %roles_with_managed_policies.Properties.ManagedPolicyArns[*] != /AdministratorAccess/
+    <<
+        violation: an IAM role attaches AdministratorAccess.
+        fix: grant the specific actions the role needs, as inline statements.
+    >>
+}
+
+#
+# No inline policy may grant blanket administrative access, and specifically not
+# iam:* — the deploy role must not be able to rewrite its own permissions.
+#
+rule no_wildcard_admin_actions when %roles_with_inline_policies !empty {
+    %roles_with_inline_policies.Properties.Policies[*].PolicyDocument.Statement[*].Action[*] != "*"
+    <<
+        violation: an inline policy grants Action "*".
+        fix: enumerate the actions the role actually performs.
+    >>
+
+    %roles_with_inline_policies.Properties.Policies[*].PolicyDocument.Statement[*].Action[*] != "iam:*"
+    <<
+        violation: an inline policy grants iam:*.
+        fix: scope IAM actions to this project's own roles by ARN prefix.
+    >>
+}
+
+#
+# Every bucket this template creates blocks public access and is encrypted. The
+# Terraform state bucket in particular holds resource identifiers and outputs.
+#
+rule s3_blocks_public_access when %s3_buckets !empty {
+    %s3_buckets.Properties.PublicAccessBlockConfiguration exists
+    %s3_buckets.Properties.PublicAccessBlockConfiguration.BlockPublicAcls == true
+    %s3_buckets.Properties.PublicAccessBlockConfiguration.BlockPublicPolicy == true
+    %s3_buckets.Properties.PublicAccessBlockConfiguration.IgnorePublicAcls == true
+    %s3_buckets.Properties.PublicAccessBlockConfiguration.RestrictPublicBuckets == true
+    <<
+        violation: a bucket does not fully block public access.
+        fix: set all four PublicAccessBlockConfiguration flags to true.
+    >>
+}
+
+rule s3_encrypted when %s3_buckets !empty {
+    %s3_buckets.Properties.BucketEncryption exists
+    <<
+        violation: a bucket has no default encryption.
+        fix: add BucketEncryption with an SSEAlgorithm.
+    >>
+}
+
+#
+# State corruption should be recoverable, and the bucket must survive a stack delete —
+# deleting the state is how an environment becomes unmanageable rather than destroyed.
+#
+rule state_bucket_versioned {
+    Resources.TerraformStateBucket.Properties.VersioningConfiguration.Status == "Enabled"
+    <<
+        violation: the Terraform state bucket is not versioned.
+        fix: set VersioningConfiguration.Status to Enabled.
+    >>
+}
+
+rule state_bucket_retained {
+    Resources.TerraformStateBucket.DeletionPolicy == "Retain"
+    Resources.TerraformStateBucket.UpdateReplacePolicy == "Retain"
+    <<
+        violation: the Terraform state bucket is not retained on stack delete.
+        fix: set DeletionPolicy and UpdateReplacePolicy to Retain.
+    >>
+}
+
+#
+# The Stripe key is a live credential; it must never echo into console output,
+# events or the stack's parameter listing.
+#
+rule secret_parameters_are_noecho {
+    Parameters.StripeKey.NoEcho == true
+    <<
+        violation: StripeKey is not marked NoEcho.
+        fix: add NoEcho: true to the parameter.
+    >>
+}

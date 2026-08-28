@@ -7,12 +7,21 @@ The architecture proposal this implements is in
 [`docs/infra-target-architecture.html`](docs/infra-target-architecture.html) (and as
 markdown in the application repo at `.agents/plans/infra-target-architecture.md`).
 
-## Deploying an environment
+## Deploy
+
+[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?stackName=cvhome-platform&templateURL=https://cvhome-saas.s3.eu-central-1.amazonaws.com/platform/bootstrap.yaml)
+
+Launches in whichever region your console is currently in.
+
+The button points at the template in S3, not at this repository: the CloudFormation
+console's `templateURL` only accepts an S3 URL. `.github/workflows/publish-bootstrap.yml`
+uploads `bootstrap/bootstrap.yaml` there on every push to `main`, and refuses to publish
+a template that does not pass `cfn-lint`.
 
 One click, then wait.
 
-1. Launch `bootstrap/bootstrap.yaml` in CloudFormation. It asks for a project id, an
-   environment name, a flavour, a hosted zone, a pod count and a Stripe key.
+1. The stack asks for a project id, an environment name, a flavour, a hosted zone, a
+   pod count and a Stripe key.
 2. It writes the environment's config to SSM, creates the state bucket, a scoped deploy
    role and three CodeBuild projects — then **starts the pipeline**.
 3. The pipeline runs itself:

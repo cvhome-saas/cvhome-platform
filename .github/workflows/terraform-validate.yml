@@ -88,8 +88,10 @@ jobs:
           python-version: "3.12"
       - run: pip install cfn-lint
       - run: cfn-lint bootstrap/bootstrap.yaml
+      # Not continue-on-error: these rules are verified to fail on the exact defects
+      # the legacy template shipped (PowerUserAccess, iam:*, an unversioned state
+      # bucket, an echoing Stripe key). A soft failure here would defeat the point.
       - uses: aws-cloudformation/cloudformation-guard@v1
-        continue-on-error: true
         with:
           rules: bootstrap/guard-rules
           data: bootstrap/bootstrap.yaml

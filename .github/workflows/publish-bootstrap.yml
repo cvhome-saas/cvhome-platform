@@ -1,0 +1,87 @@
+name: publish bootstrap
+
+# The one-click launch button needs the template at an S3 URL: the CloudFormation
+# console's `templateURL` parameter only accepts S3, so a raw GitHub URL will not work.
+# This workflow is what makes the button in README.md point at something real.
+#
+# Replaces cvhome-bootstrap's deploy.yml, with two differences: it authenticates via
+# OIDC instead of static access keys, and it refuses to publish a template that does
+# not lint. A one-click button that launches a broken stack is worse than no button.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - bootstrap/bootstrap.yaml
+      - .github/workflows/publish-bootstrap.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Overridable per repo without touching this file.
+  BUCKET: ${{ vars.TEMPLATE_BUCKET || 'cvhome-saas' }}
+  BUCKET_REGION: ${{ vars.TEMPLATE_BUCKET_REGION || 'eu-central-1' }}
+  KEY: platform/bootstrap.yaml
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Gate: never publish a template that cannot deploy.
+      - name: Lint
+        run: |
+          pip install --quiet cfn-lint
+          cfn-lint bootstrap/bootstrap.yaml
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TEMPLATE_PUBLISH_ROLE_ARN }}
+          aws-region: ${{ env.BUCKET_REGION }}
+
+      - name: Upload
+        run: |
+          # --acl public-read matches how the cvhome-saas bucket already serves the
+          # legacy template. If ACLs are ever disabled on the bucket (Object Ownership
+          # set to "Bucket owner enforced"), drop this flag and grant public read to
+          # ${KEY} with a bucket policy instead — the object must stay world-readable
+          # or the launch button breaks for everyone.
+          aws s3 cp bootstrap/bootstrap.yaml "s3://${BUCKET}/${KEY}" \
+            --acl public-read \
+            --content-type text/yaml \
+            --cache-control "max-age=300"
+
+      - name: Verify it is publicly readable
+        run: |
+          URL="https://${BUCKET}.s3.${BUCKET_REGION}.amazonaws.com/${KEY}"
+          # Unauthenticated fetch, the same way a stranger's browser will see it.
+          code=$(curl -s -o /tmp/published.yaml -w '%{http_code}' "$URL")
+          if [ "$code" != "200" ]; then
+            echo "::error::Template is not publicly readable (HTTP $code). The launch button will not work."
+            exit 1
+          fi
+          diff -q bootstrap/bootstrap.yaml /tmp/published.yaml \
+            || { echo "::error::Published template differs from the committed one."; exit 1; }
+          echo "Published and verified: $URL"
+
+      - name: Summary
+        run: |
+          URL="https://${BUCKET}.s3.${BUCKET_REGION}.amazonaws.com/${KEY}"
+          LAUNCH="https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?stackName=cvhome-platform&templateURL=${URL}"
+          {
+            echo "### Bootstrap template published"
+            echo ""
+            echo "- Template: \`$URL\`"
+            echo "- [Launch stack]($LAUNCH)"
+          } >> "$GITHUB_STEP_SUMMARY"
