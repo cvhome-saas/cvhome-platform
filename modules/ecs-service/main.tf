@@ -15,6 +15,22 @@ locals {
   role_base  = "${local.prefix}-${local.role_scope}${var.name}"
 
   log_group = "/aws/ecs/${var.project}/${var.env}/${var.layer}/${var.name}"
+
+  # One source of truth for how many tasks to start. With autoscaling on, the floor is
+  # the autoscaling minimum, so the flavour cannot say 2 while the scaler says 1 and
+  # each apply fights the scaler. Without it, the flavour's own count applies.
+  desired = var.autoscaling.enabled ? var.autoscaling.min : var.desired_count
+
+  scaling = var.autoscaling.enabled ? 1 : 0
+
+  # Request-count tracking needs both suffixes to name the metric, so it is only
+  # possible for a service behind an application load balancer.
+  request_target_group = try([for tg in values(var.target_groups) : tg.arn_suffix if tg.arn_suffix != null][0], null)
+  can_scale_on_requests = (
+    var.autoscaling.request_target != null &&
+    var.load_balancer_arn_suffix != null &&
+    local.request_target_group != null
+  )
 }
 
 # --------------------------------------------------------------------- security group
@@ -145,7 +161,7 @@ resource "aws_ecs_service" "this" {
   name            = var.name
   cluster         = var.cluster_name
   task_definition = aws_ecs_task_definition.this.arn
-  desired_count   = var.desired_count
+  desired_count   = local.desired
 
   # Only meaningful when a load balancer is attached; harmless otherwise.
   health_check_grace_period_seconds = length(var.target_groups) > 0 ? var.health_check_grace_seconds : null
@@ -207,21 +223,28 @@ resource "aws_ecs_service" "this" {
 }
 
 # ----------------------------------------------------------------------- autoscaling
+#
+# Every policy below is optional and driven by config: the flavour sets the shape for
+# an environment, the catalog overrides it for a service that behaves differently.
+# Previously this was a fixed pair of CPU and memory policies with hardcoded targets,
+# so "autoscaling" meant one thing everywhere it was switched on.
 
 resource "aws_appautoscaling_target" "this" {
-  count = var.autoscale ? 1 : 0
+  count = local.scaling
 
-  min_capacity       = var.desired_count
-  max_capacity       = var.desired_count * 3
+  min_capacity       = var.autoscaling.min
+  max_capacity       = var.autoscaling.max
   resource_id        = "service/${var.cluster_name}/${aws_ecs_service.this.name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"
+
+  tags = var.tags
 }
 
 resource "aws_appautoscaling_policy" "cpu" {
-  count = var.autoscale ? 1 : 0
+  count = local.scaling > 0 && var.autoscaling.cpu_target != null ? 1 : 0
 
-  name               = "${local.prefix}-${local.qualified_name}-cpu"
+  name               = "${local.role_base}-cpu"
   policy_type        = "TargetTrackingScaling"
   resource_id        = aws_appautoscaling_target.this[0].resource_id
   scalable_dimension = aws_appautoscaling_target.this[0].scalable_dimension
@@ -231,16 +254,16 @@ resource "aws_appautoscaling_policy" "cpu" {
     predefined_metric_specification {
       predefined_metric_type = "ECSServiceAverageCPUUtilization"
     }
-    target_value       = 60
-    scale_in_cooldown  = 300
-    scale_out_cooldown = 60
+    target_value       = var.autoscaling.cpu_target
+    scale_in_cooldown  = var.autoscaling.scale_in_cooldown
+    scale_out_cooldown = var.autoscaling.scale_out_cooldown
   }
 }
 
 resource "aws_appautoscaling_policy" "memory" {
-  count = var.autoscale ? 1 : 0
+  count = local.scaling > 0 && var.autoscaling.memory_target != null ? 1 : 0
 
-  name               = "${local.prefix}-${local.qualified_name}-mem"
+  name               = "${local.role_base}-mem"
   policy_type        = "TargetTrackingScaling"
   resource_id        = aws_appautoscaling_target.this[0].resource_id
   scalable_dimension = aws_appautoscaling_target.this[0].scalable_dimension
@@ -250,8 +273,48 @@ resource "aws_appautoscaling_policy" "memory" {
     predefined_metric_specification {
       predefined_metric_type = "ECSServiceAverageMemoryUtilization"
     }
-    target_value       = 70
-    scale_in_cooldown  = 300
-    scale_out_cooldown = 60
+    target_value       = var.autoscaling.memory_target
+    scale_in_cooldown  = var.autoscaling.scale_in_cooldown
+    scale_out_cooldown = var.autoscaling.scale_out_cooldown
+  }
+}
+
+# Requests per target per minute. This leads CPU for request-driven services: queueing
+# shows up in request rate before it shows up in processor time.
+resource "aws_appautoscaling_policy" "requests" {
+  count = local.scaling > 0 && local.can_scale_on_requests ? 1 : 0
+
+  name               = "${local.role_base}-req"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.this[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.this[0].scalable_dimension
+  service_namespace  = aws_appautoscaling_target.this[0].service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ALBRequestCountPerTarget"
+      resource_label         = "${var.load_balancer_arn_suffix}/${local.request_target_group}"
+    }
+    target_value       = var.autoscaling.request_target
+    scale_in_cooldown  = var.autoscaling.scale_in_cooldown
+    scale_out_cooldown = var.autoscaling.scale_out_cooldown
+  }
+}
+
+# Known daily shape, rather than a reaction to load. A schedule sets the floor and
+# ceiling; the target-tracking policies still move within them.
+resource "aws_appautoscaling_scheduled_action" "this" {
+  for_each = local.scaling > 0 ? { for sch in var.autoscaling.schedules : sch.name => sch } : {}
+
+  name               = "${local.role_base}-${each.key}"
+  resource_id        = aws_appautoscaling_target.this[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.this[0].scalable_dimension
+  service_namespace  = aws_appautoscaling_target.this[0].service_namespace
+  schedule           = each.value.schedule
+  timezone           = each.value.timezone
+
+  scalable_target_action {
+    min_capacity = each.value.min
+    max_capacity = each.value.max
   }
 }

@@ -25,6 +25,17 @@
 #                specific hosts below the gateway's catch-all.
 #   secrets      env injected from Secrets Manager, as "<secret>:<json-key>".
 #   needs_pod_list  receives COM_ASREVO_CVHOME_PODS[n]_* for every pod in the environment.
+#   autoscaling  overrides merged over the flavour's autoscaling block, key by key.
+#                Set only what actually differs for this service; everything else
+#                follows the environment. Omitted entirely for most services.
+#
+#                Capacity is RELATIVE and targets are ABSOLUTE, deliberately. `max` is
+#                a property of the environment — staging should never run twelve tasks
+#                just because prod does — so a service asks for headroom as
+#                `max_factor`, a multiple of whatever the flavour allows. A CPU or
+#                memory target is a property of the workload and holds everywhere, so
+#                it is written as a plain number. Setting a key to `null` switches that
+#                metric off for this service even when the flavour sets it.
 #   extra_env    the genuinely per-service keys. Everything shared is computed once
 #                in the module, never repeated here. Values are rendered with
 #                templatestring: ${namespace} and ${ports.<service>} are available, so
@@ -38,6 +49,12 @@ core:
     runtime: spring
     size: gateway
     needs_pod_list: true
+    # Every request to the platform passes through here, so it saturates before
+    # anything behind it: half again the headroom of a typical service, and a lower
+    # CPU target so it scales out before latency shows up downstream.
+    autoscaling:
+      max_factor: 1.5
+      cpu_target: 45
     edge:
       lb: alb
       priority: 100
@@ -65,6 +82,11 @@ core:
     database: false
     runtime: node
     size: ui
+    # Server-side rendering is CPU-bound and has no JVM heap to pressure, so memory
+    # tracking only adds a policy that never fires. The floor stays the flavour's:
+    # dropping prod to a single task would trade real availability for one task-hour.
+    autoscaling:
+      memory_target: null
 
   tenancy:
     port: 8020
@@ -101,6 +123,12 @@ pod:
     database: false
     runtime: caddy
     size: gateway
+    # The storefront edge for every tenant on this pod. Behind a network load
+    # balancer, so there is no per-target request count to scale on — CPU only.
+    autoscaling:
+      max_factor: 1.5
+      cpu_target: 50
+      request_target: null
     # Caddy terminates TLS itself with on-demand certificates for custom tenant
     # domains. 2019 is Caddy's admin API, used as the NLB health check target.
     ports: [80, 443, 2019]
@@ -121,6 +149,11 @@ pod:
     database: false
     runtime: node
     size: ui
+    # Server-side rendering is CPU-bound and has no JVM heap to pressure, so memory
+    # tracking only adds a policy that never fires. The floor stays the flavour's:
+    # dropping prod to a single task would trade real availability for one task-hour.
+    autoscaling:
+      memory_target: null
     extra_env:
       INTERNAL_SPG: "http://spg.${namespace}:${ports.spg}"
 

@@ -96,6 +96,32 @@ locals {
     ports     = { for n, sv in var.services : n => sv.port }
   }
 
+  # Scaling policy per service: the flavour sets the environment's shape, the catalog
+  # overrides it where a service genuinely behaves differently. Resolved key by key
+  # rather than with merge(), so a service can override one target without restating
+  # the block — and so an omitted optional target stays omitted rather than becoming
+  # null-versus-absent guesswork downstream.
+  as_flavour = var.flavour.autoscaling
+
+  autoscaling = {
+    for name, svc in var.services : name => {
+      enabled = try(svc.autoscaling.enabled, local.as_flavour.enabled)
+      min     = try(svc.autoscaling.min, local.as_flavour.min, var.flavour.desired_count)
+      # Relative, so a service that needs headroom gets it in proportion to the
+      # environment rather than dragging a prod-sized ceiling into staging.
+      max = ceil(
+        try(local.as_flavour.max, var.flavour.desired_count * 3) *
+        try(svc.autoscaling.max_factor, 1)
+      )
+      cpu_target         = try(svc.autoscaling.cpu_target, local.as_flavour.cpu_target, null)
+      memory_target      = try(svc.autoscaling.memory_target, local.as_flavour.memory_target, null)
+      request_target     = try(svc.autoscaling.request_target, local.as_flavour.request_target, null)
+      scale_in_cooldown  = try(svc.autoscaling.scale_in_cooldown, local.as_flavour.scale_in_cooldown, 300)
+      scale_out_cooldown = try(svc.autoscaling.scale_out_cooldown, local.as_flavour.scale_out_cooldown, 60)
+      schedules          = try(svc.autoscaling.schedules, local.as_flavour.schedules, [])
+    }
+  }
+
   services = {
     for name, svc in var.services : name => merge(svc, {
       image = "${var.docker_registry}/${svc.image}:${var.image_tag}"
@@ -182,7 +208,7 @@ module "service" {
   cpu                        = each.value.size.cpu
   memory                     = each.value.size.memory
   desired_count              = var.flavour.desired_count
-  autoscale                  = var.flavour.autoscale
+  autoscaling                = local.autoscaling[each.key]
   capacity                   = var.flavour.capacity
   health_check_grace_seconds = var.flavour.health_check_grace_seconds
   log_retention_days         = var.flavour.log_retention_days

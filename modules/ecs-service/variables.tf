@@ -90,9 +90,68 @@ variable "desired_count" {
   type = number
 }
 
-variable "autoscale" {
-  type    = bool
-  default = false
+variable "autoscaling" {
+  description = <<-EOT
+    Resolved scaling policy for this one service: the flavour's block with the
+    catalog's per-service overrides merged over it.
+
+    Each target is independent and optional — omit one and no policy is created for it.
+    Where several are active they run together and the highest wins, which is what you
+    want: whichever signal saturates first is the one that should add capacity.
+
+      cpu_target      average CPU across the service
+      memory_target   average memory; catches leaks and JVM heap pressure that CPU misses
+      request_target  requests per target per minute. Only meaningful behind an
+                      application load balancer, and ignored without one, because it
+                      needs the ALB and target group ARN suffixes to name the metric.
+
+    `schedules` sets min and max at fixed times — for known daily shape, not for
+    reacting to load. Scaling to zero overnight keeps the URL and the load balancer up
+    while paying for no tasks; hibernating takes those down too.
+  EOT
+  type = object({
+    enabled            = bool
+    min                = optional(number, 1)
+    max                = optional(number, 3)
+    cpu_target         = optional(number)
+    memory_target      = optional(number)
+    request_target     = optional(number)
+    scale_in_cooldown  = optional(number, 300)
+    scale_out_cooldown = optional(number, 60)
+    schedules = optional(list(object({
+      name     = string
+      schedule = string
+      timezone = optional(string, "UTC")
+      min      = number
+      max      = number
+    })), [])
+  })
+  default = { enabled = false }
+
+  validation {
+    condition     = !var.autoscaling.enabled || var.autoscaling.max >= var.autoscaling.min
+    error_message = "autoscaling.max must be at least autoscaling.min."
+  }
+
+  validation {
+    condition = !var.autoscaling.enabled || anytrue([
+      var.autoscaling.cpu_target != null,
+      var.autoscaling.memory_target != null,
+      var.autoscaling.request_target != null,
+      length(var.autoscaling.schedules) > 0,
+    ])
+    error_message = "autoscaling is enabled but no target and no schedule is set, so nothing would ever scale. Set at least one of cpu_target, memory_target, request_target, or a schedule."
+  }
+}
+
+variable "load_balancer_arn_suffix" {
+  description = <<-EOT
+    ARN suffix of the application load balancer fronting this service, needed to name
+    the ALBRequestCountPerTarget metric. Null for services with no load balancer, and
+    for network load balancers, which publish no per-target request count.
+  EOT
+  type        = string
+  default     = null
 }
 
 variable "capacity" {
@@ -124,9 +183,16 @@ variable "log_retention_days" {
 # --- edge ------------------------------------------------------------------------
 
 variable "target_groups" {
-  description = "Target group ARNs to attach, keyed arbitrarily, each with the container port it serves."
-  type        = map(object({ arn = string, port = number }))
-  default     = {}
+  description = <<-EOT
+    Target groups to attach, keyed arbitrarily. `arn_suffix` is only needed for
+    request-count scaling; the first entry that has one is the metric's target group.
+  EOT
+  type = map(object({
+    arn        = string
+    port       = number
+    arn_suffix = optional(string)
+  }))
+  default = {}
 }
 
 variable "load_balancer_security_group_id" {

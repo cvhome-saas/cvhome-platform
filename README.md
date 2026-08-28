@@ -124,6 +124,64 @@ flavour_overrides = {
 Overrides merge one level deep into `rds`, `capacity` and `sizes`, so changing one field
 does not mean restating the block.
 
+## Autoscaling
+
+Two levels. The **flavour** sets the environment's shape; the **catalog** overrides it
+only where a service genuinely behaves differently.
+
+```yaml
+# flavours.yaml — prod
+autoscaling:
+  enabled: true
+  min: 2
+  max: 12
+  cpu_target: 55         # average CPU across the service
+  memory_target: 70      # catches JVM heap pressure that CPU misses
+  request_target: 800    # requests per target per minute, ALB-fronted services only
+  scale_out_cooldown: 60
+  scale_in_cooldown: 600 # out fast, in slowly: flapping costs more than a task-hour
+  schedules: []
+```
+
+```yaml
+# services.yaml — the gateway fronts every request, so it saturates first
+store-core-gateway:
+  autoscaling:
+    max_factor: 1.5      # half again the headroom of a typical service
+    cpu_target: 45       # scale out before latency reaches anything behind it
+```
+
+**Capacity is relative, targets are absolute** — deliberately. `max` belongs to the
+environment: staging should not run twelve tasks because prod does. So a service asks
+for headroom as a multiple of whatever the flavour allows, and the same catalog entry
+gives the gateway a ceiling of 5 in staging and 18 in prod. A CPU or memory target, by
+contrast, is a property of the workload and holds everywhere, so it is a plain number.
+
+Setting a key to `null` switches that metric off for one service even when the flavour
+sets it: `spg` sits behind a network load balancer, which publishes no per-target
+request count, so it takes `request_target: null` and scales on CPU alone.
+
+Every policy is optional. Where several are active they run together and the highest
+wins — whichever signal saturates first adds capacity.
+
+`schedules` handles known daily shape rather than reacting to load:
+
+```yaml
+schedules:
+  - name: weeknight-down
+    schedule: "cron(0 20 ? * MON-FRI *)"
+    timezone: Europe/Berlin
+    min: 0
+    max: 0
+```
+
+Scaling to zero overnight keeps the URL and the load balancer alive while paying for no
+tasks — lighter than hibernating, which takes the load balancer and the database down
+too. A worked example sits commented out in the `staging` flavour.
+
+Where autoscaling is on, `desired_count` is the autoscaling minimum, so the flavour and
+the scaler cannot disagree about the floor and fight on every apply.
+
 ## Layout
 
 ```
