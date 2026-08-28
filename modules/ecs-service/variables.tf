@@ -195,8 +195,19 @@ variable "target_groups" {
   default = {}
 }
 
+# Whether a load balancer fronts this service, and which security group it uses, are
+# two separate facts. Whether is known from the catalog before anything is created;
+# which is a resource attribute that does not exist until apply. They were one
+# argument, so the known answer had to travel through the unknown one and the ingress
+# rule below could not decide how many instances it had at plan time.
+variable "load_balancer_attached" {
+  description = "Whether a load balancer fronts this service. Known from configuration, so it can key a for_each."
+  type        = bool
+  default     = false
+}
+
 variable "load_balancer_security_group_id" {
-  description = "When set, the load balancer's SG is allowed in on the service's ports in addition to the VPC CIDR."
+  description = "The load balancer's SG, allowed in on the service's ports in addition to the VPC CIDR. Required when load_balancer_attached is true."
   type        = string
   default     = null
 }

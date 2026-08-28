@@ -244,6 +244,7 @@ module "service" {
   # load balancer and target group together.
   load_balancer_arn_suffix = try(each.value.edge.lb, "") == "alb" ? aws_lb.this[0].arn_suffix : null
 
+  load_balancer_attached          = try(each.value.edge.lb, "") == "alb"
   load_balancer_security_group_id = try(each.value.edge.lb, "") == "alb" ? aws_security_group.alb[0].id : null
 
   secret_arns = each.value.secret_arns

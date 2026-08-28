@@ -64,7 +64,11 @@ resource "aws_vpc_security_group_ingress_rule" "vpc" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "load_balancer" {
-  for_each = var.load_balancer_security_group_id == null ? toset([]) : toset([for p in var.ports : tostring(p)])
+  # Keyed off load_balancer_attached, not off the security group id: the id is created
+  # in this same apply, so testing it for null leaves Terraform unable to tell whether
+  # this set is empty or holds one key per port. The id is still used below, where an
+  # unknown value is allowed.
+  for_each = var.load_balancer_attached ? toset([for p in var.ports : tostring(p)]) : toset([])
 
   security_group_id            = aws_security_group.this.id
   description                  = "Load balancer to ${var.name}:${each.value}"
