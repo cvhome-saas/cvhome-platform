@@ -116,11 +116,52 @@ resource "aws_cloudfront_distribution" "cdn" {
     }
   }
 
-  viewer_certificate {
-    cloudfront_default_certificate = true
+  # The custom domain, when the edge certificate exists. Without it the distribution
+  # keeps its generated d111111abcdef8.cloudfront.net name, which works but ties every
+  # asset URL baked into a build to one distribution that cannot be replaced.
+  aliases = local.cdn_fqdn == null ? [] : [local.cdn_fqdn]
+
+  # Two blocks, one of which is always empty: the default certificate and an ACM one
+  # take different arguments and cannot be expressed as one conditional block.
+  dynamic "viewer_certificate" {
+    for_each = local.cdn_fqdn == null ? [1] : []
+    content {
+      cloudfront_default_certificate = true
+    }
+  }
+
+  dynamic "viewer_certificate" {
+    for_each = local.cdn_fqdn == null ? [] : [1]
+    content {
+      acm_certificate_arn = var.cdn_certificate_arn
+      ssl_support_method  = "sni-only"
+      # SNI has no cost and no dedicated IP, and 2021 is the current AWS recommended
+      # floor. Anything older is a policy decision, not a default.
+      minimum_protocol_version = "TLSv1.2_2021"
+    }
   }
 
   tags = var.tags
+}
+
+# A and AAAA, because the distribution is dual stack and an IPv6-only client that finds
+# no AAAA record simply cannot reach it.
+#
+# zone_id comes from the distribution rather than the documented CloudFront constant
+# Z2FDTNDATAQYW2: the provider exposes it, and a constant copied into config is a fact
+# that can silently go stale.
+resource "aws_route53_record" "cdn" {
+  for_each = local.cdn_fqdn == null ? toset([]) : toset(["A", "AAAA"])
+
+  zone_id = var.hosted_zone_id
+  name    = local.cdn_fqdn
+  type    = each.value
+
+  alias {
+    name                   = aws_cloudfront_distribution.cdn.domain_name
+    zone_id                = aws_cloudfront_distribution.cdn.hosted_zone_id
+    evaluate_target_health = false
+  }
 }
 
 data "aws_iam_policy_document" "cdn" {
