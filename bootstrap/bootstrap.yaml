@@ -296,6 +296,20 @@ Resources:
                   - ssm:ListTagsForResource
                 Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectId}/*"
 
+              # DescribeParameters is a list operation. IAM evaluates it against
+              # arn:aws:ssm:<region>:<account>:* rather than against any one parameter,
+              # so a path-scoped Resource cannot match and every call is denied. That is
+              # what the AccessDeniedException reported: the resource it named was the
+              # account wildcard, not parameter/cvhome/dev/prereq. The provider reads
+              # parameter metadata through it, so a plan cannot run without it.
+              #
+              # This grants metadata only. Reading a parameter value still needs
+              # ReadConfigAndSecrets below, which stays scoped to the project prefix.
+              - Sid: ListParameterMetadata
+                Effect: Allow
+                Action: ssm:DescribeParameters
+                Resource: "*"
+
               - Sid: ReadConfigAndSecrets
                 Effect: Allow
                 Action:
