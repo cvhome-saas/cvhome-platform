@@ -1,1 +1,20 @@
-/.idea/
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+crash.*.log
+
+# Never commit real values — envs/*.tfvars hold choices, not secrets,
+# but a local override file is a common place to leak one.
+*.auto.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+.DS_Store
+.idea/

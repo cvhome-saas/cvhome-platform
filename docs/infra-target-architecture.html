@@ -1,0 +1,1125 @@
+<title>CVHome Platform Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;600&display=swap">
+
+<style>
+  :root {
+    --ground:   #EFF2F4;
+    --surface:  #FFFFFF;
+    --sunken:   #E4E9EC;
+    --ink:      #141E26;
+    --ink-soft: #43535F;
+    --muted:    #6C7C88;
+    --rule:     #D3DBE0;
+    --rule-soft:#E2E8EC;
+    --accent:   #0C6357;
+    --accent-bg:#DCEAE7;
+    --warn:     #9E4224;
+    --warn-bg:  #F3E2DB;
+    --flag:     #6B4E9E;
+
+    --f-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --f-body: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --f-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --col: 70ch;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:   #0E1519;
+      --surface:  #161F25;
+      --sunken:   #1C272E;
+      --ink:      #E3EAEE;
+      --ink-soft: #B4C2CB;
+      --muted:    #8696A2;
+      --rule:     #27343C;
+      --rule-soft:#1F2A31;
+      --accent:   #4FC0AD;
+      --accent-bg:#12312D;
+      --warn:     #DE8461;
+      --warn-bg:  #33201A;
+      --flag:     #A98BDB;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:   #0E1519;
+    --surface:  #161F25;
+    --sunken:   #1C272E;
+    --ink:      #E3EAEE;
+    --ink-soft: #B4C2CB;
+    --muted:    #8696A2;
+    --rule:     #27343C;
+    --rule-soft:#1F2A31;
+    --accent:   #4FC0AD;
+    --accent-bg:#12312D;
+    --warn:     #DE8461;
+    --warn-bg:  #33201A;
+    --flag:     #A98BDB;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-size: 17px;
+    line-height: 1.65;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+  }
+
+  @media (min-width: 1080px) {
+    .shell {
+      grid-template-columns: 210px minmax(0, 1fr);
+      gap: 56px;
+      padding-right: 48px;
+    }
+  }
+
+  /* ---------- masthead ---------- */
+
+  .masthead {
+    grid-column: 1 / -1;
+    border-bottom: 2px solid var(--ink);
+    padding: 64px 0 26px;
+    margin-bottom: 44px;
+  }
+
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 18px;
+  }
+
+  h1 {
+    font-family: var(--f-display);
+    font-weight: 700;
+    font-size: clamp(2.1rem, 5.2vw, 3.15rem);
+    line-height: 1.04;
+    letter-spacing: -0.024em;
+    text-wrap: balance;
+    margin: 0 0 22px;
+    max-width: 20ch;
+  }
+
+  .standfirst {
+    font-size: 1.14rem;
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 0 0 30px;
+  }
+
+  .facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 30px;
+    font-family: var(--f-mono);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .facts b {
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  /* ---------- nav rail ---------- */
+
+  .rail { display: none; }
+
+  @media (min-width: 1080px) {
+    .rail {
+      display: block;
+      align-self: start;
+      position: sticky;
+      top: 32px;
+      font-family: var(--f-mono);
+      font-size: 11.5px;
+      line-height: 1.5;
+      border-left: 1px solid var(--rule);
+      padding-left: 16px;
+    }
+    .rail a {
+      display: block;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 5px 0;
+      border-bottom: 1px solid transparent;
+    }
+    .rail a:hover { color: var(--accent); }
+    .rail a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .rail .n {
+      color: var(--ink);
+      opacity: 0.45;
+      margin-right: 7px;
+    }
+    .rail .grp {
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--ink);
+      font-weight: 600;
+      padding: 18px 0 6px;
+      font-size: 10px;
+    }
+    .rail .grp:first-child { padding-top: 0; }
+  }
+
+  /* ---------- sections ---------- */
+
+  main { min-width: 0; }
+
+  section { margin-bottom: 68px; scroll-margin-top: 24px; }
+
+  h2 {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 1.72rem;
+    letter-spacing: -0.018em;
+    line-height: 1.15;
+    text-wrap: balance;
+    margin: 0 0 8px;
+    padding-top: 22px;
+    border-top: 1px solid var(--ink);
+    display: flex;
+    gap: 14px;
+    align-items: baseline;
+  }
+  h2 .sn {
+    font-family: var(--f-mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+    flex: none;
+  }
+
+  .lede {
+    color: var(--ink-soft);
+    max-width: var(--col);
+    margin: 0 0 26px;
+  }
+
+  h3 {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 1.13rem;
+    letter-spacing: -0.008em;
+    margin: 34px 0 10px;
+    color: var(--ink);
+  }
+
+  h4 {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 0.95rem;
+    margin: 24px 0 8px;
+  }
+
+  p { max-width: var(--col); margin: 0 0 16px; }
+  ul, ol { max-width: var(--col); padding-left: 1.15em; margin: 0 0 18px; }
+  li { margin-bottom: 8px; }
+
+  strong { font-weight: 600; }
+  em { font-style: italic; }
+
+  code, .mono {
+    font-family: var(--f-mono);
+    font-size: 0.845em;
+    background: var(--sunken);
+    padding: 0.1em 0.36em;
+    border-radius: 3px;
+    word-break: break-word;
+  }
+
+  a { color: var(--accent); }
+
+  /* ---------- flow block ---------- */
+
+  .flow {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    padding: 20px 22px;
+    overflow-x: auto;
+    margin: 0 0 26px;
+  }
+  .flow pre {
+    font-family: var(--f-mono);
+    font-size: 12px;
+    line-height: 1.72;
+    margin: 0;
+    color: var(--ink-soft);
+    white-space: pre;
+  }
+  .flow pre b { color: var(--ink); font-weight: 600; }
+  .flow pre i { color: var(--muted); font-style: normal; }
+
+  /* ---------- tables ---------- */
+
+  .tw { overflow-x: auto; margin: 0 0 26px; }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-family: var(--f-display);
+    font-size: 13.5px;
+    line-height: 1.45;
+    background: var(--surface);
+  }
+  th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 10.5px;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1px solid var(--ink);
+    padding: 9px 14px 8px;
+    white-space: nowrap;
+  }
+  td {
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+    color: var(--ink-soft);
+  }
+  td:first-child { color: var(--ink); }
+  tbody tr:last-child td { border-bottom: none; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* status pills */
+  .pill {
+    display: inline-block;
+    font-family: var(--f-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+  .pill-ok   { background: var(--accent-bg); color: var(--accent); }
+  .pill-bad  { background: var(--warn-bg); color: var(--warn); }
+  .pill-warn { background: var(--sunken); color: var(--flag); }
+
+  /* ---------- defect → rule ---------- */
+
+  .defect {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--warn);
+    padding: 18px 22px 6px;
+    margin: 0 0 16px;
+    max-width: 88ch;
+  }
+  .defect h4 { margin-top: 0; }
+  .defect p, .defect ul { max-width: 78ch; }
+  .defect .tw, .defect table { margin-bottom: 18px; }
+
+  .rule {
+    display: flex;
+    gap: 11px;
+    align-items: baseline;
+    border-top: 1px solid var(--rule-soft);
+    margin: 6px -22px 0;
+    padding: 12px 22px;
+    background: var(--accent-bg);
+  }
+  .rule .k {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    flex: none;
+  }
+  .rule .v {
+    font-family: var(--f-display);
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--ink);
+    line-height: 1.45;
+  }
+
+  /* ---------- callout ---------- */
+
+  .note {
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--flag);
+    background: var(--surface);
+    padding: 16px 20px;
+    margin: 0 0 24px;
+    max-width: 82ch;
+  }
+  .note p { margin-bottom: 0; max-width: none; font-size: 15.5px; color: var(--ink-soft); }
+  .note .k {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--flag);
+    display: block;
+    margin-bottom: 7px;
+  }
+
+  /* ---------- build steps ---------- */
+
+  .steps { list-style: none; padding: 0; margin: 0; max-width: 86ch; counter-reset: s; }
+  .steps > li {
+    counter-increment: s;
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 16px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--rule-soft);
+    margin: 0;
+  }
+  .steps > li::before {
+    content: counter(s, decimal-leading-zero);
+    font-family: var(--f-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    padding-top: 3px;
+    font-variant-numeric: tabular-nums;
+  }
+  .steps .sb { min-width: 0; }
+  .steps .st { font-family: var(--f-display); font-weight: 600; font-size: 15px; margin-bottom: 3px; }
+  .steps .sd { font-size: 15px; color: var(--ink-soft); }
+  .steps .verify {
+    font-family: var(--f-mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    margin-top: 6px;
+    line-height: 1.55;
+  }
+  .steps .verify b { color: var(--accent); font-weight: 600; }
+
+  /* ---------- ADR ---------- */
+
+  .adr {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    padding: 22px 24px;
+    margin: 0 0 18px;
+  }
+  .adr-h {
+    display: flex;
+    gap: 12px;
+    align-items: baseline;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 12px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .adr-h .id {
+    font-family: var(--f-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    color: var(--accent);
+    flex: none;
+  }
+  .adr-h .t {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 1.06rem;
+    letter-spacing: -0.008em;
+    line-height: 1.25;
+  }
+  .adr dl { margin: 0; display: grid; grid-template-columns: 1fr; gap: 0; }
+  @media (min-width: 700px) {
+    .adr dl { grid-template-columns: 108px minmax(0, 1fr); column-gap: 20px; }
+  }
+  .adr dt {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 8px 0 2px;
+  }
+  @media (min-width: 700px) { .adr dt { padding: 8px 0; text-align: right; } }
+  .adr dd {
+    margin: 0;
+    padding: 0 0 8px;
+    font-size: 15px;
+    color: var(--ink-soft);
+    line-height: 1.55;
+  }
+  @media (min-width: 700px) { .adr dd { padding: 8px 0; border-bottom: 1px solid var(--rule-soft); } }
+  .adr dl > dd:last-of-type { border-bottom: none; }
+  .adr dd.rej { color: var(--warn); }
+
+  /* ---------- close ---------- */
+
+  .close {
+    border-top: 2px solid var(--ink);
+    padding-top: 26px;
+    margin-top: 12px;
+  }
+  .close p { font-size: 15px; color: var(--muted); }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  }
+  html { scroll-behavior: smooth; }
+</style>
+
+<div class="shell">
+
+  <header class="masthead">
+    <p class="eyebrow">Proposal · awaiting approval</p>
+    <h1>CVHome Infrastructure &amp; Deployment</h1>
+    <p class="standfirst">
+      A target architecture for the platform that deploys CVHome — written against three legacy
+      infrastructure repositories that, as they stand, could not deploy the current application even if
+      they were applied.
+    </p>
+    <div class="facts">
+      <span><b>Scope</b> &nbsp;Phase one — discovery &amp; architecture</span>
+      <span><b>Region</b> &nbsp;eu-central-1</span>
+      <span><b>Deployed today</b> &nbsp;Nothing</span>
+      <span><b>Services</b> &nbsp;15 shipped / 11 known to Terraform</span>
+    </div>
+  </header>
+
+  <nav class="rail" aria-label="Contents">
+    <div class="grp">Contents</div>
+    <a href="#s0"><span class="n">00</span>The reframe</a>
+    <a href="#s1"><span class="n">01</span>Current state</a>
+    <a href="#s2"><span class="n">02</span>Target architecture</a>
+    <a href="#s3"><span class="n">03</span>Cost review</a>
+    <a href="#s4"><span class="n">04</span>Build &amp; rollout</a>
+    <a href="#s5"><span class="n">05</span>Decisions</a>
+    <div class="grp">Decisions</div>
+    <a href="#adr1"><span class="n">1</span>Platform</a>
+    <a href="#adr2"><span class="n">2</span>IaC split</a>
+    <a href="#adr3"><span class="n">3</span>Catalog</a>
+    <a href="#adr4"><span class="n">4</span>Flavours</a>
+    <a href="#adr5"><span class="n">5</span>Consolidation</a>
+    <a href="#adr6"><span class="n">6</span>State</a>
+    <a href="#adr7"><span class="n">7</span>Per-pod RDS</a>
+    <a href="#adr8"><span class="n">8</span>Per-pod NLB</a>
+    <a href="#adr9"><span class="n">9</span>CI/CD</a>
+    <a href="#adr10"><span class="n">10</span>Networking</a>
+    <a href="#adr11"><span class="n">11</span>Spot policy</a>
+  </nav>
+
+  <main>
+
+    <!-- ========== 0 ========== -->
+    <section id="s0">
+      <h2><span class="sn">00</span>The one fact that reframes everything</h2>
+      <p><strong>Nothing is deployed.</strong> All three infrastructure repositories are unprovisioned
+      legacy code. The requirements document was written assuming a running system, and therefore asks for
+      a migration plan that minimises downtime, risk, resource replacement and data loss. None of those
+      constraints exist. There is nothing to import, nothing to reuse, no downtime budget to protect.</p>
+
+      <p>So this proposal makes one substitution to the required structure: <strong>§4 is a Build &amp;
+      Rollout Plan — zero to running — in place of a Migration Plan.</strong> Everything else follows the
+      brief exactly.</p>
+
+      <p>The second consequence is the more useful one: the target architecture is designed on its merits,
+      rather than as a sequence of safe deltas from a system that must keep serving traffic.</p>
+    </section>
+
+    <!-- ========== 1 ========== -->
+    <section id="s1">
+      <h2><span class="sn">01</span>Current state</h2>
+      <p class="lede">The deployment flow as designed, the repositories that hold it, and the debt that
+      makes it undeployable. Every claim below was read in the source, not inferred — each carries its file
+      and line.</p>
+
+      <h3>Deployment flow, as designed</h3>
+      <div class="flow">
+<pre><b>CloudFormation</b> (cvhome-bootstrap/bootstrap.yaml)
+  ├─ generates a random 4-char project id      <i>(custom resource)</i>
+  ├─ creates 11 ECR repositories               <i>— 15 are needed</i>
+  ├─ requests an ACM certificate
+  ├─ writes /{project}/config/cvhome to SSM    <i>bootstrap.yaml:441</i>
+  ├─ creates the Terraform state bucket
+  ├─ creates 3 CodeBuild projects              <i>:1111 :1174 :1223</i>
+  └─ registers a Stripe webhook                <i>:805 — at a dead path</i>
+                                               <i>✗ nothing starts the pipeline</i>
+
+<b>CodeBuild</b> cvhome-build         → gradlew bootBuildImage → ECR
+<b>CodeBuild</b> cvhome-infra-deploy  → terraform apply
+<b>CodeBuild</b> cvhome-infra-destroy → terraform destroy
+
+<b>cvhome-infra</b> (root)
+  ├─ VPC · public/private/database subnets · no NAT   <i>vpc.tf:23</i>
+  ├─ S3 log bucket
+  ├─ module store-core    → ./store-core
+  ├─ module store-pod     → git::…?ref=main           <i>main.tf:90</i>
+  └─ module store-pod-n   → git::…?ref=main           <i>main.tf:113</i></pre>
+      </div>
+
+      <h3>Repository responsibilities</h3>
+      <div class="tw">
+        <table>
+          <thead>
+            <tr><th>Repository</th><th>Holds</th><th>Verdict</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>cvhome-bootstrap</code></td><td>1275-line CloudFormation template, 5 Lambda custom resources</td><td><span class="pill pill-bad">Replace</span></td></tr>
+            <tr><td><code>cvhome-infra</code></td><td>Root Terraform: VPC, logs, store-core, pod fan-out</td><td><span class="pill pill-bad">Replace</span></td></tr>
+            <tr><td><code>cvhome-store-pod</code></td><td>Per-pod cluster, NLB, RDS, CDN, services</td><td><span class="pill pill-bad">Replace</span></td></tr>
+            <tr><td><code>cvhome-common-ecs-service</code></td><td>Shared ECS service module</td><td><span class="pill pill-warn">Absorb</span></td></tr>
+            <tr><td><code>cvhome-secrets</code></td><td>Terraform nothing reads and nothing writes</td><td><span class="pill pill-bad">Delete</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Technical debt — each defect produces a design rule</h3>
+      <p>This section is short and does one job: every defect below maps to a rule in §2, so the new
+      architecture is answerable to something concrete rather than to taste.</p>
+
+      <div class="defect">
+        <h4>a. Service drift — the defect that makes the stack undeployable</h4>
+        <p>The application ships <strong>15</strong> deployable services. The Terraform knows
+        <strong>11</strong>, four of them under stale names.</p>
+        <div class="tw">
+          <table>
+            <thead>
+              <tr><th>App service</th><th class="num">Port</th><th>Legacy Terraform</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>store-core-gateway</code></td><td class="num">8000</td><td><span class="pill pill-ok">present</span></td></tr>
+              <tr><td><code>uaa</code></td><td class="num">8001</td><td><span class="pill pill-ok">present</span></td></tr>
+              <tr><td><code>console-ui</code></td><td class="num">8011</td><td><span class="pill pill-warn">as seller-ui : 8010</span></td></tr>
+              <tr><td><code>tenancy</code></td><td class="num">8020</td><td><span class="pill pill-warn">as control-plane</span></td></tr>
+              <tr><td><code>billing</code></td><td class="num">8021</td><td><span class="pill pill-bad">absent</span></td></tr>
+              <tr><td><code>pod-registry</code></td><td class="num">8022</td><td><span class="pill pill-bad">absent</span></td></tr>
+              <tr><td><code>spg</code></td><td class="num">80</td><td><span class="pill pill-ok">present</span></td></tr>
+              <tr><td><code>landing-ui</code></td><td class="num">8110</td><td><span class="pill pill-ok">present</span></td></tr>
+              <tr><td><code>merchant</code></td><td class="num">8120</td><td><span class="pill pill-ok">present</span></td></tr>
+              <tr><td><code>content</code></td><td class="num">8121</td><td><span class="pill pill-bad">absent</span></td></tr>
+              <tr><td><code>catalog</code></td><td class="num">8122</td><td><span class="pill pill-ok">present</span></td></tr>
+              <tr><td><code>checkout</code></td><td class="num">8123</td><td><span class="pill pill-ok">present</span></td></tr>
+              <tr><td><code>cua</code></td><td class="num">8124</td><td><span class="pill pill-ok">present</span></td></tr>
+              <tr><td><code>payment</code></td><td class="num">8125</td><td><span class="pill pill-ok">present</span></td></tr>
+              <tr><td><code>inventory</code></td><td class="num">8126</td><td><span class="pill pill-bad">absent</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Six ECR repositories are missing from <code>bootstrap.yaml:187–253</code> for the same reason.
+        ECR does not create repositories on push, so the image build fails <em>before Terraform is ever
+        reached</em>.</p>
+        <div class="rule"><span class="k">Rule</span><span class="v">One catalog, machine-read, drift-checked in CI.</span></div>
+      </div>
+
+      <div class="defect">
+        <h4>b. Duplication</h4>
+        <p><code>store-pod-cluster.tf</code> is <strong>654 lines</strong> because roughly 25 identical
+        environment variables are copy-pasted into six service blocks. A new service costs about 60 lines
+        of near-identical HCL.</p>
+        <div class="rule"><span class="k">Rule</span><span class="v">Env computed once; services generated by <code>for_each</code>.</span></div>
+      </div>
+
+      <div class="defect">
+        <h4>c. Two divergent deploy paths that disagree on the project id</h4>
+        <ul>
+          <li>Bootstrap / CodeBuild derives <code>project</code> as a <strong>random 4-character id</strong>.</li>
+          <li>GitHub Actions derives it as <code>cksum(account-owner-region)</code>.</li>
+        </ul>
+        <p>Different ids mean different SSM paths, different ECR paths, different state. The Actions path
+        reads an SSM parameter only the bootstrap creates, and passes <code>TF_VAR_env</code>,
+        <code>TF_VAR_image_tag</code> and <code>TF_VAR_docker_registry</code> — none of which
+        <code>cvhome-infra/params.tf</code> declares, so all three are silently ignored. The application's
+        own publish workflows use the <code>cksum</code> scheme, so images land in a registry path
+        Terraform never looks at.</p>
+        <div class="rule"><span class="k">Rule</span><span class="v">One deployer, one project id, resolved from one place.</span></div>
+      </div>
+
+      <div class="defect">
+        <h4>d. No environment dimension</h4>
+        <p><code>env</code> is hardcoded <code>"dev"</code> in the SSM payload
+        (<code>bootstrap.yaml:451</code>). One stack is one environment, and it can only ever be dev.</p>
+        <div class="rule"><span class="k">Rule</span><span class="v"><code>env</code> is a first-class parameter; a named flavour carries the rest.</span></div>
+      </div>
+
+      <div class="defect">
+        <h4>e. Renames that broke routing and billing</h4>
+        <ul>
+          <li>The ALB forwards <code>seller-ui.&lt;domain&gt;</code> (<code>store-core-lb.tf:96</code>) and a
+          Route53 record exists for it (<code>:201</code>) — but <code>GatewayRouteLocatorImpl:68–70</code>
+          matches only <code>console-ui.&lt;domain&gt;</code>.</li>
+          <li>The Stripe webhook is registered at
+          <code>/subscription/api/v1/stripe-webhook/public/events</code>
+          (<code>bootstrap.yaml:805</code>). That path did not survive the tenancy/billing split; the real
+          one is <code>/billing/api/v1/stripe-webhook/public/events</code>.</li>
+          <li>The Stripe key is injected into <strong>tenancy</strong>, but Stripe now lives in
+          <strong>billing</strong>.</li>
+        </ul>
+        <div class="rule"><span class="k">Rule</span><span class="v">Hostnames, routes and secret bindings derive from the catalog, not hand-maintained lists.</span></div>
+      </div>
+
+      <div class="defect">
+        <h4>f. Dead knobs and dead wiring</h4>
+        <ul>
+          <li><code>pod_size</code> is threaded SSM → pod object → module variable and <strong>never
+          read</strong> — four values in the console that do nothing.</li>
+          <li><code>private_subnets</code> is declared in <code>cvhome-store-pod/params.tf:16</code> and
+          referenced nowhere else in the repo.</li>
+          <li><code>random_password.password</code> is generated (<code>store-core.tf:4</code>) and never
+          referenced.</li>
+          <li><code>health_check</code>, <code>priority</code>, <code>service_type</code> and
+          <code>load_balancer_host_matchers</code> are declared in the shared module and consumed
+          <strong>zero</strong> times.</li>
+          <li><code>cvhome-secrets</code> is read by nothing, and its <code>bcrypt()</code> locals re-hash
+          on every plan — a permanent diff if it were ever wired up.</li>
+        </ul>
+        <div class="rule"><span class="k">Rule</span><span class="v">Every input is consumed, or absent.</span></div>
+      </div>
+
+      <div class="defect">
+        <h4>g. Reproducibility</h4>
+        <p>Six module references are sourced <code>git::…?ref=main</code>. An apply can change behaviour
+        with no commit in the repository being applied.</p>
+        <div class="rule"><span class="k">Rule</span><span class="v">Pin by tag — or, where a module has one consumer, keep it in-repo.</span></div>
+      </div>
+
+      <div class="defect">
+        <h4>h. Security</h4>
+        <ul>
+          <li>Tasks run in <strong>public subnets with public IPs</strong>; every service sets
+          <code>public = true</code>.</li>
+          <li>Service security groups allow ingress on <strong>ports 0–65535</strong> from the whole VPC CIDR.</li>
+          <li>RDS is <code>publicly_accessible = true</code> — <code>store-core-db.tf:54</code>,
+          <code>store-pod-db.tf:54</code>.</li>
+          <li>Both task roles grant <code>s3:*</code>, <code>ssm:*</code>, <code>secretsmanager:*</code>,
+          <code>logs:*</code>, <code>xray:*</code> on <code>"*"</code> —
+          <code>ecs-task-roles.tf:35–38</code>, <code>:81–84</code>.</li>
+          <li>The Terraform deploy role holds <strong><code>PowerUserAccess</code></strong>
+          (<code>bootstrap.yaml:992</code>) <em>and</em> an inline <code>iam:*</code>.</li>
+          <li>GitHub Actions authenticate with static long-lived AWS access keys.</li>
+        </ul>
+      </div>
+
+      <div class="defect">
+        <h4>i. Reliability</h4>
+        <ul>
+          <li><code>FARGATE_SPOT</code> at weight 100 with <strong>no on-demand base</strong>
+          (<code>ecs-service.tf:113</code>), and <code>desired = 1</code> for every service.</li>
+          <li>Deployment circuit breaker <strong>disabled</strong>, rollback disabled (<code>:120–121</code>).</li>
+          <li><code>health_check_grace_period_seconds = 0</code> (<code>:110</code>) on Spring Boot services
+          that take tens of seconds to become healthy.</li>
+          <li>RDS with <code>skip_final_snapshot</code>, no backup retention, no deletion protection.</li>
+        </ul>
+      </div>
+
+      <div class="defect">
+        <h4>j. No right-sizing &nbsp;·&nbsp; k. Stale identifiers in the application</h4>
+        <p>All 15 services request an identical 512 CPU / 1024 MB / 1 task. Separately,
+        <code>fargate-config.yml:25–26</code> pins a real Cloud Map namespace and id —
+        <code>store-pod-507f1f77.cvhome.lcl</code> and <code>ns-je7qri6wn7fbsrpn</code> — as checked-in
+        defaults. Both must become environment-supplied.</p>
+      </div>
+    </section>
+
+    <!-- ========== 2 ========== -->
+    <section id="s2">
+      <h2><span class="sn">02</span>Target architecture</h2>
+
+      <h3>a. Platform: ECS Fargate + Cloud Map, kept — and now on the record</h3>
+      <p>The brief explicitly opens the platform question, so this is a decision rather than an
+      inheritance. <strong>It stays because the application is ECS-native, not because it is already
+      there.</strong> <code>ecs-service-discoveryclient</code> resolves <code>lb://</code> URIs through
+      Cloud Map <code>DiscoverInstances</code>; there is a <code>fargate</code> Spring profile and a
+      <code>fargate-task-info</code> module.</p>
+      <ul>
+        <li><strong>EKS</strong> adds a control-plane fee per cluster plus real operational weight, for no
+        capability CVHome needs, and would require replacing the discovery client.</li>
+        <li><strong>App Runner</strong> has no Cloud Map service discovery and cannot do the raw TCP 80/443
+        passthrough that <code>spg</code> requires for Caddy's on-demand TLS.</li>
+      </ul>
+
+      <h3>b. The service catalog — the central mechanism</h3>
+      <p>One <code>services.yaml</code> is the single source of truth: name, layer, port, image repository
+      path, whether it needs a database, health-check path, edge exposure, and any genuinely
+      service-specific env. Terraform <code>for_each</code>es it into ECR repositories, ECS services, task
+      definitions, environment variables, security-group rules, ALB host rules and Route53 records. Common
+      env is computed <em>once</em> into a <code>local</code>. The 654-line pod file becomes roughly 150.
+      <strong>Adding a service is one catalog entry.</strong></p>
+      <p>A CI job diffs the catalog against three sources in the application repository and fails on
+      mismatch — <code>common-config.yml</code> for names and ports, <code>fargate-config.yml</code> for the
+      service-ports map, and every <code>build.gradle</code> that sets an image name. That check is
+      precisely what would have caught the four services that ended up with no infrastructure.</p>
+
+      <h3>c. Flavours — the two-step model, made structural</h3>
+      <p>Replace the scattered <code>is_prod</code> / <code>is_monitoring</code> /
+      <code>pod_auto_scale</code> / <code>pod_size</code> flags with <strong>one named flavour</strong>:
+      <code>dev</code>, <code>staging</code>, <code>prod</code>, <code>ephemeral</code>. A flavour fixes
+      task sizing, desired counts, Spot-versus-on-demand policy, RDS class and backup policy, log
+      retention, monitoring, and whether tasks run in private subnets. Every key stays individually
+      overridable, and <code>pod_size</code> becomes real instead of dead.</p>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Step</th><th>Tool</th><th>Does</th></tr></thead>
+          <tbody>
+            <tr><td><strong>1 · Bootstrap</strong></td><td>CloudFormation, one click</td><td>Collects hosted zone, env name, flavour, project id, pod count/size, Stripe key. Writes the config record to SSM. Creates only what Terraform cannot create for itself — state bucket, scoped deploy role, CodeBuild projects — <strong>then starts the pipeline</strong>.</td></tr>
+            <tr><td><strong>2 · Provision</strong></td><td>Terraform, run by CodeBuild</td><td><code>prereq</code> state (ECR + ACM, from the catalog) → image build → <code>env</code> state (everything else).</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note">
+        <span class="k">Why this fixes the one-click deploy</span>
+        <p>Nothing triggers CodeBuild in the legacy template. That is exactly why its “one-click” deploy
+        stops halfway — the stack completes, and no infrastructure follows.</p>
+      </div>
+
+      <h3>d. Environments, configuration and state</h3>
+      <p><code>project</code> becomes a stable, settable id rather than random 4 characters;
+      <code>env</code> becomes a real parameter; resources are named
+      <code>${project}-${env}-*</code>. State lives at <code>env/&lt;env&gt;/terraform.tfstate</code> with
+      <strong>S3 native locking</strong> (<code>use_lockfile</code>, Terraform ≥ 1.10) — no DynamoDB table,
+      no extra cost. Configuration layers: SSM holds what bootstrap generated,
+      <code>envs/&lt;env&gt;.tfvars</code> holds what humans chose, and <strong>tfvars wins</strong>.
+      Someone who never touches git still gets a working environment; a team that does gets reviewable
+      diffs.</p>
+
+      <h3>e. Repository structure</h3>
+      <div class="flow">
+<pre><b>cvhome-platform/</b>
+  bootstrap/bootstrap.yaml     <i># step 1 — the only CloudFormation left</i>
+  services.yaml                <i># the catalog</i>
+  flavours.yaml                <i># dev | staging | prod | ephemeral</i>
+  modules/ecs-service/         <i># absorbed from cvhome-common-ecs-service</i>
+  modules/network/
+  modules/store-core/
+  modules/store-pod/
+  prereq/                      <i># ECR + ACM, applied first</i>
+  envs/{dev,staging,prod}.tfvars
+  scripts/check-catalog-drift.sh
+  main.tf variables.tf outputs.tf backend.tf versions.tf</pre>
+      </div>
+      <p>The shared ECS module is <strong>absorbed rather than kept external and tag-pinned</strong>. It is
+      where the reliability and IAM defects above actually live, it needs a near-rewrite, and it has exactly
+      one consumer — so an external repository buys a release ceremony and nothing else.</p>
+
+      <h3>f. Store-pod</h3>
+      <p><strong>Per-pod RDS</strong>, chosen for isolation over cost. <strong>The per-pod NLB is retained,
+      and cannot be shared:</strong> <code>spg</code> terminates TLS itself, using Caddy on-demand
+      certificates for arbitrary custom tenant domains. A shared NLB routes by port, not by SNI-to-backend
+      mapping, and cannot express “this certificate, minted seconds ago, for a domain no configuration
+      lists”.</p>
+      <p>Worth recording without proposing it now: a per-<em>environment</em> <code>spg</code> fleet backed
+      by <code>pod-registry</code> would collapse those NLBs into one. That is an application change, and
+      belongs to its own decision.</p>
+
+      <h3>g. Secrets &nbsp;·&nbsp; h. Security and reliability</h3>
+      <p>RDS-managed master user secret; one Secrets Manager secret per concern under
+      <code>/${project}/${env}/</code>; task IAM scoped to those ARNs. The Stripe secret binds to
+      <strong>billing</strong>, and the webhook registers the path billing actually serves.</p>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Defect today</th><th>Target</th></tr></thead>
+          <tbody>
+            <tr><td>SG ingress 0–65535</td><td>The service's own port only, from the VPC CIDR</td></tr>
+            <tr><td>Tasks public, with public IPs</td><td>Private subnets + one NAT <strong>under prod</strong>; dev/staging stay public-subnet</td></tr>
+            <tr><td>RDS <code>publicly_accessible</code></td><td>Never publicly accessible, in any flavour</td></tr>
+            <tr><td>Task roles <code>*</code> on s3/ssm/secretsmanager</td><td>Scoped to the service's own ECR repo, log group, and <code>/${project}/${env}/*</code></td></tr>
+            <tr><td>Deploy role <code>PowerUserAccess</code> + <code>iam:*</code></td><td>Explicit statement list</td></tr>
+            <tr><td><code>FARGATE_SPOT</code> weight 100, no base</td><td>On-demand base with Spot overflow under prod</td></tr>
+            <tr><td>Circuit breaker disabled</td><td>Enabled, with rollback</td></tr>
+            <tr><td>Grace period 0</td><td>A real grace period, from the flavour</td></tr>
+            <tr><td>RDS no backups, no deletion protection</td><td>Encryption, backups and deletion protection under prod</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>On networking cost specifically: NAT gateways are <em>not</em> enabled for dev or staging. They are
+      poor value there, and VPC interface endpoints are not cheaper for this traffic mix. Prod pays for one
+      NAT and gets private tasks — the trade is stated, not buried.</p>
+
+      <h3>i. CI/CD</h3>
+      <p><strong>CodeBuild is canonical — Actions never applies again.</strong> GitHub Actions becomes a
+      pure validation pipeline (<code>.github/workflows/terraform-validate.yml</code>): format, validate,
+      lint, catalog-drift and CloudFormation checks on every push and pull request, plus a plan posted to
+      the PR. Only the plan job touches AWS, and it does so via <strong>OIDC</strong> — the static
+      <code>AWS_ACCESS_KEY_ID</code> and <code>AWS_SECRET_ACCESS_KEY</code> secrets go away entirely. The
+      job breakdown is in §4, step 8.</p>
+      <p>The application's publish workflows are fixed at the same time, to resolve the real project id from
+      SSM instead of <code>cksum</code>.</p>
+    </section>
+
+    <!-- ========== 3 ========== -->
+    <section id="s3">
+      <h2><span class="sn">03</span>Cost review</h2>
+
+      <div class="note">
+        <span class="k">No dollar figures here yet — deliberately</span>
+        <p>The AWS pricing tooling is unavailable in this environment and querying prices from a local AWS
+        session is out of scope for now, so any number here would be asserted from memory. That is exactly
+        the failure mode this document exists to avoid. What follows is the cost <em>structure</em>, which
+        does not depend on a price lookup.</p>
+      </div>
+
+      <h3>What each environment is made of</h3>
+      <p><strong>Fixed per environment</strong>, independent of pod count: store-core ECS tasks (6
+      services), store-core RDS, the ALB, Route53, CloudWatch Logs, CodeBuild minutes, ECR storage across
+      15 repositories, Secrets Manager, and — under prod only — one NAT gateway.</p>
+
+      <p><strong>Scaling linearly with pod count</strong>, which is the term that decides the bill:</p>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Term</th><th>Shape</th></tr></thead>
+          <tbody>
+            <tr><td>Per-pod ECS tasks</td><td>9 services × task-hours <strong>× pods</strong></td></tr>
+            <tr><td>Per-pod RDS</td><td>instance-hour + storage <strong>× pods</strong></td></tr>
+            <tr><td>Per-pod NLB</td><td>hourly + NLCU <strong>× pods</strong></td></tr>
+            <tr><td>Per-pod CloudFront</td><td>requests + egress <strong>× pods</strong></td></tr>
+            <tr><td>Per-pod S3 (CDN + cert buckets)</td><td>storage + requests <strong>× pods</strong></td></tr>
+            <tr><td>Per-pod Cloud Map namespace</td><td>per-namespace + discovery calls <strong>× pods</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>A pod is therefore not a marginal cost — it is roughly a second small environment. Pod count is the
+      single most important number in a flavour, and the architecture should make that visible rather than
+      hide it behind a console dropdown.</p>
+
+      <h3>Levers, ranked — given per-pod RDS is fixed</h3>
+      <ol>
+        <li><strong>Right-sizing.</strong> All 15 services request an identical 512 / 1024. A gateway, a
+        Next.js UI and a JPA-heavy catalog service do not share a profile. Because task-hours appear once
+        per service <em>and again per pod</em>, this is the largest single lever — and the catalog makes it
+        a one-line change per service.</li>
+        <li><strong>One otel-collector per environment, not one per pod.</strong> The legacy code runs one
+        in store-core <em>and</em> one in every pod — with N pods, that is N+1 collectors. Cross-namespace
+        DNS resolves inside the VPC, so a single environment-level collector costs nothing in complexity and
+        removes N tasks.</li>
+        <li><strong>Flavour-gated monitoring</strong> — off entirely below staging.</li>
+        <li><strong>Log retention from the flavour</strong>, rather than a hardcoded 14 days everywhere.</li>
+        <li><strong>No NAT below prod</strong> — saves the hourly charge and per-GB processing in the two
+        environments that run most of the time.</li>
+      </ol>
+
+      <h3>Trades stated, not buried</h3>
+      <ul>
+        <li><strong>Per-pod RDS</strong> costs materially more than a shared instance with a schema per pod.
+        Bought for tenant isolation and per-pod restore.</li>
+        <li><strong>On-demand Fargate base under prod</strong> costs more per task-hour than pure Spot.
+        Bought because at <code>desired = 1</code> on pure Spot, a reclamation is an outage.</li>
+        <li><strong>One NAT gateway under prod</strong> is a real monthly line item, bought to get tasks out
+        of public subnets — and not bought below prod, where narrowed security groups do the load-bearing
+        work.</li>
+      </ul>
+    </section>
+
+    <!-- ========== 4 ========== -->
+    <section id="s4">
+      <h2><span class="sn">04</span>Build &amp; rollout plan</h2>
+      <p class="lede">Replaces the brief's Migration Plan — nothing is deployed, so there is nothing to
+      migrate. Ordered so that every step is independently verifiable before the next begins.</p>
+
+      <ol class="steps">
+        <li><div class="sb"><div class="st">Repo skeleton</div><div class="sd">Terraform ≥ 1.10 pinned for native state locking; AWS provider pinned to an exact minor.</div></div></li>
+        <li><div class="sb"><div class="st">Catalog + drift check</div><div class="sd"><code>services.yaml</code> and <code>scripts/check-catalog-drift.sh</code>.</div><div class="verify"><b>Verify</b> exits 0 against the current app checkout — and non-zero when a service is removed from it.</div></div></li>
+        <li><div class="sb"><div class="st">Flavours</div><div class="sd"><code>flavours.yaml</code> — dev, staging, prod, ephemeral.</div></div></li>
+        <li><div class="sb"><div class="st">modules/ecs-service</div><div class="sd">Absorbed and reworked: per-port security groups, flavour-driven capacity strategy, real grace period, circuit breaker with rollback, scoped task IAM.</div></div></li>
+        <li><div class="sb"><div class="st">network, store-core, store-pod modules</div><div class="sd">Services generated by <code>for_each</code> over the catalog; env computed once.</div><div class="verify"><b>Verify</b> plan against dev tfvars shows 15 services with correct ports and image paths, and no datasource env on the four services marked <code>database: false</code>.</div></div></li>
+        <li><div class="sb"><div class="st">Root and prereq roots</div><div class="sd">State layout, native locking, SSM-plus-tfvars config layering.</div></div></li>
+        <li><div class="sb"><div class="st">Bootstrap template</div><div class="sd">Rewritten to create only what Terraform cannot, and to start the pipeline.</div><div class="verify"><b>Verify</b> clean under cfn-lint and cfn-guard before it is called done.</div></div></li>
+        <li><div class="sb"><div class="st">GitHub validation pipeline</div><div class="sd"><code>.github/workflows/terraform-validate.yml</code>, on every push and pull request — the workflow that replaces <code>cvhome-infra</code>'s <code>trigger-apply.yml</code>. Actions never applies again.</div>
+          <div class="tw" style="margin:12px 0 0;">
+            <table>
+              <thead><tr><th>Job</th><th>Runs</th><th>Gate</th></tr></thead>
+              <tbody>
+                <tr><td><code>fmt</code></td><td><code>terraform fmt -check -recursive</code></td><td>any unformatted file</td></tr>
+                <tr><td><code>validate</code></td><td><code>init -backend=false</code> + <code>validate</code>, each root <em>and</em> each module</td><td>invalid HCL or a bad reference</td></tr>
+                <tr><td><code>lint</code></td><td><code>tflint --recursive</code>, AWS ruleset</td><td>deprecated syntax, bad instance types, unused declarations</td></tr>
+                <tr><td><code>catalog-drift</code></td><td><code>scripts/check-catalog-drift.sh</code></td><td>catalog and app repo disagree</td></tr>
+                <tr><td><code>cfn</code></td><td><code>cfn-lint</code> + <code>cfn-guard</code></td><td>template or policy violations</td></tr>
+                <tr><td><code>plan</code></td><td><code>plan</code> against dev tfvars, posted to the PR</td><td>informational — needs OIDC</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="verify">The first five jobs need <b>no AWS credentials at all</b>, so they run on every PR including forks. Only <code>plan</code> assumes a role.</div>
+        </div></li>
+        <li><div class="sb"><div class="st">Application-side changes</div><div class="sd">The two load-bearing fixes in the app repo — see below.</div></div></li>
+        <li><div class="sb"><div class="st">First dev environment, end to end</div><div class="sd">Launched from the bootstrap into eu-central-1.</div><div class="verify"><b>Verify each stage</b> SSM record written → prereq apply creates 15 ECR repos and the certificate → image build pushes 15 images → env apply converges → every service steady in ECS.</div></div></li>
+        <li><div class="sb"><div class="st">QA validation</div><div class="sd">Against the application's real paths: sign in to the console at <code>console-ui.&lt;domain&gt;</code>, load a storefront on a pod domain, confirm Cloud Map resolves <code>lb://</code> targets, confirm a Stripe webhook delivery reaches <code>billing</code>.</div></div></li>
+        <li><div class="sb"><div class="st">staging and prod flavours</div><div class="sd">Prod moves tasks to private subnets, flips capacity to an on-demand base, and enables RDS backups, encryption and deletion protection.</div></div></li>
+        <li><div class="sb"><div class="st">Retire the legacy repos</div><div class="sd">Archive bootstrap, infra, store-pod and the shared module; delete <code>cvhome-secrets</code>.</div></div></li>
+      </ol>
+
+      <h3>Application-side changes this architecture requires</h3>
+      <p>Both live in the application repository, and both are load-bearing:</p>
+      <ul>
+        <li><code>fargate-config.yml:25–26</code> — drop the pinned namespace and namespace-id defaults.
+        Terraform already injects them; the checked-in values point at one specific pod in one specific
+        account.</li>
+        <li>The two private-ECR publish workflows — replace the <code>cksum</code> project id with the real
+        one resolved from SSM, and replace static credentials with OIDC. Today these push images somewhere
+        Terraform never reads.</li>
+      </ul>
+    </section>
+
+    <!-- ========== 5 ========== -->
+    <section id="s5">
+      <h2><span class="sn">05</span>Architecture decisions</h2>
+      <p class="lede">Each in the shape the brief requires. “Build impact” replaces “migration impact”,
+      since there is nothing to migrate.</p>
+
+      <div class="adr" id="adr1">
+        <div class="adr-h"><span class="id">ADR-1</span><span class="t">Platform: ECS Fargate + Cloud Map</span></div>
+        <dl>
+          <dt>Current</dt><dd>ECS Fargate, by inheritance rather than decision.</dd>
+          <dt>Proposed</dt><dd>ECS Fargate + Cloud Map, deliberately.</dd>
+          <dt>Why</dt><dd>The application resolves <code>lb://</code> through Cloud Map and ships a <code>fargate</code> profile; <code>spg</code> needs raw TCP 80/443 passthrough for Caddy on-demand TLS.</dd>
+          <dt>Trade-offs</dt><dd>Less portable than Kubernetes; Fargate costs more per vCPU-hour than raw EC2.</dd>
+          <dt>Cost</dt><dd>Avoids an EKS control-plane fee per cluster.</dd>
+          <dt>Build</dt><dd>None — the target keeps the platform the code already assumes.</dd>
+          <dt>Rejected</dt><dd class="rej">EKS (cost and operational weight for no needed capability); App Runner (no Cloud Map discovery, no TCP passthrough); ECS on EC2 (capacity management CVHome does not want).</dd>
+        </dl>
+      </div>
+
+      <div class="adr" id="adr2">
+        <div class="adr-h"><span class="id">ADR-2</span><span class="t">CloudFormation for bootstrap only, Terraform for everything else</span></div>
+        <dl>
+          <dt>Current</dt><dd>CloudFormation bootstraps and also creates ECR, ACM and SSM; Terraform does the rest; the two disagree about the project id.</dd>
+          <dt>Proposed</dt><dd>CloudFormation creates only what Terraform cannot create for itself — state bucket, deploy role, CodeBuild — then starts the pipeline.</dd>
+          <dt>Why</dt><dd>The one-click launch is genuinely valuable and is CloudFormation's alone: no CLI, no state, no credentials to pre-provision. Beyond that boundary it buys nothing.</dd>
+          <dt>Trade-offs</dt><dd>Two languages in one repository.</dd>
+          <dt>Build</dt><dd>The template is rewritten, not extended.</dd>
+          <dt>Rejected</dt><dd class="rej">All-Terraform bootstrap (needs a pre-existing state bucket and credentials — kills the one-click experience); CDK (a third toolchain, and a build step before you can deploy).</dd>
+        </dl>
+      </div>
+
+      <div class="adr" id="adr3">
+        <div class="adr-h"><span class="id">ADR-3</span><span class="t">A machine-read service catalog</span></div>
+        <dl>
+          <dt>Current</dt><dd>Service lists hand-maintained in Terraform, CloudFormation and the application, independently.</dd>
+          <dt>Proposed</dt><dd>One <code>services.yaml</code>, <code>for_each</code>ed into every derived resource, drift-checked in CI.</dd>
+          <dt>Why</dt><dd>The hand-maintained lists silently diverged and left four services with no infrastructure and six with no ECR repository.</dd>
+          <dt>Trade-offs</dt><dd>A layer of indirection between reading HCL and knowing what exists.</dd>
+          <dt>Cost</dt><dd>None directly — but it enables right-sizing, the largest cost lever.</dd>
+          <dt>Rejected</dt><dd class="rej">Generating the catalog from <code>common-config.yml</code> at plan time — couples an apply to the app repo's current state; the drift check gives the same safety without the coupling.</dd>
+        </dl>
+      </div>
+
+      <div class="adr" id="adr4">
+        <div class="adr-h"><span class="id">ADR-4</span><span class="t">Flavours instead of boolean flags</span></div>
+        <dl>
+          <dt>Current</dt><dd><code>is_prod</code>, <code>is_monitoring</code>, <code>pod_auto_scale</code>, <code>pod_size</code> (dead), <code>allow_test_stores</code>.</dd>
+          <dt>Proposed</dt><dd>One named flavour per environment fixing sizing, capacity policy, RDS class, backups, retention, monitoring and networking; each key overridable.</dd>
+          <dt>Why</dt><dd>Booleans multiply combinatorially and encode no intent — four independent flags is sixteen configurations nobody has tested.</dd>
+          <dt>Trade-offs</dt><dd>An unusual combination requires an explicit override.</dd>
+          <dt>Build</dt><dd><code>pod_size</code> becomes real instead of dead.</dd>
+        </dl>
+      </div>
+
+      <div class="adr" id="adr5">
+        <div class="adr-h"><span class="id">ADR-5</span><span class="t">Repository consolidation, including the shared ECS module</span></div>
+        <dl>
+          <dt>Current</dt><dd>Five repositories; six module references pinned to <code>main</code>.</dd>
+          <dt>Proposed</dt><dd>One <code>cvhome-platform</code>. The shared module absorbed as <code>modules/ecs-service/</code>; <code>cvhome-secrets</code> deleted.</dd>
+          <dt>Why</dt><dd>The shared module has exactly one consumer and needs a near-rewrite; an external repo buys a tag-and-release ceremony per change and nothing else. <code>?ref=main</code> means an apply can change behaviour with no commit.</dd>
+          <dt>Trade-offs</dt><dd>The module can no longer be shared with a future second consumer without extraction.</dd>
+          <dt>Rejected</dt><dd class="rej">Keeping it external and tag-pinned — the original position, reversed once it became clear the module needed rewriting, not pinning.</dd>
+        </dl>
+      </div>
+
+      <div class="adr" id="adr6">
+        <div class="adr-h"><span class="id">ADR-6</span><span class="t">State layout and S3 native locking</span></div>
+        <dl>
+          <dt>Current</dt><dd>One state file, keyed differently by CodeBuild and by Actions; no locking.</dd>
+          <dt>Proposed</dt><dd><code>env/&lt;env&gt;/terraform.tfstate</code> and <code>prereq/&lt;env&gt;/…</code>, with <code>use_lockfile = true</code>.</dd>
+          <dt>Why</dt><dd>One state per environment is the unit that gets created and destroyed; native locking removes a DynamoDB table.</dd>
+          <dt>Trade-offs</dt><dd>Requires Terraform ≥ 1.10.</dd>
+          <dt>Build</dt><dd>None — no state exists to move.</dd>
+        </dl>
+      </div>
+
+      <div class="adr" id="adr7">
+        <div class="adr-h"><span class="id">ADR-7</span><span class="t">Per-pod RDS</span></div>
+        <dl>
+          <dt>Proposed</dt><dd>Unchanged from today, now deliberate.</dd>
+          <dt>Why</dt><dd>Tenant data isolation at the instance boundary; a noisy pod cannot starve another.</dd>
+          <dt>Trade-offs</dt><dd>The dominant term that scales with pod count.</dd>
+          <dt>Cost</dt><dd>Highest per-pod line item — accepted, with levers taken elsewhere.</dd>
+          <dt>Rejected</dt><dd class="rej">One shared RDS with a schema per pod — cheaper, but couples tenant blast radius and restores.</dd>
+        </dl>
+      </div>
+
+      <div class="adr" id="adr8">
+        <div class="adr-h"><span class="id">ADR-8</span><span class="t">Per-pod NLB</span></div>
+        <dl>
+          <dt>Proposed</dt><dd>Unchanged, with the reason recorded.</dd>
+          <dt>Why</dt><dd><code>spg</code> terminates TLS with Caddy on-demand certificates for arbitrary custom tenant domains; a shared NLB cannot express that mapping.</dd>
+          <dt>Cost</dt><dd>Second-largest per-pod term.</dd>
+          <dt>Rejected</dt><dd class="rej">For now: a per-environment <code>spg</code> fleet backed by <code>pod-registry</code> — it would collapse these NLBs, but it is an application change and belongs to its own decision.</dd>
+        </dl>
+      </div>
+
+      <div class="adr" id="adr9">
+        <div class="adr-h"><span class="id">ADR-9</span><span class="t">CodeBuild canonical, Actions plan-only</span></div>
+        <dl>
+          <dt>Current</dt><dd>Two deploy paths that disagree on the project id; Actions passes three variables Terraform does not declare; static AWS keys in GitHub secrets.</dd>
+          <dt>Proposed</dt><dd>CodeBuild applies; Actions runs fmt, validate, lint, drift and plan-on-PR via OIDC.</dd>
+          <dt>Why</dt><dd>One deployer means one project id and one state.</dd>
+          <dt>Trade-offs</dt><dd>Applies happen in AWS, so the log lives in CodeBuild rather than the PR.</dd>
+          <dt>Build</dt><dd>The application's publish workflows must be fixed at the same time.</dd>
+        </dl>
+      </div>
+
+      <div class="adr" id="adr10">
+        <div class="adr-h"><span class="id">ADR-10</span><span class="t">Networking per flavour</span></div>
+        <dl>
+          <dt>Current</dt><dd>Tasks in public subnets with public IPs, no NAT, RDS publicly accessible.</dd>
+          <dt>Proposed</dt><dd>Prod runs tasks in private subnets behind one NAT; dev and staging keep public subnets; RDS is never publicly accessible in any flavour.</dd>
+          <dt>Why</dt><dd>The security gap that matters most is the publicly reachable database, and closing it costs nothing. Private tasks cost real money, so they are bought where they matter.</dd>
+          <dt>Trade-offs</dt><dd>Dev and staging tasks keep public IPs; the narrowed security groups do the load-bearing work there.</dd>
+        </dl>
+      </div>
+
+      <div class="adr" id="adr11">
+        <div class="adr-h"><span class="id">ADR-11</span><span class="t">Spot policy</span></div>
+        <dl>
+          <dt>Current</dt><dd><code>FARGATE_SPOT</code> weight 100, no on-demand base, <code>desired = 1</code>, circuit breaker disabled.</dd>
+          <dt>Proposed</dt><dd>An on-demand base with Spot overflow under prod; Spot-heavy below it; circuit breaker with rollback everywhere.</dd>
+          <dt>Why</dt><dd>At <code>desired = 1</code> on pure Spot, a reclamation is an outage — and with the circuit breaker off, a bad task definition never rolls back.</dd>
+          <dt>Cost</dt><dd>An increase under prod, stated deliberately.</dd>
+        </dl>
+      </div>
+    </section>
+
+    <div class="close">
+      <h3>Verification standard for this document</h3>
+      <ul>
+        <li>Every claim about the legacy code is anchored to a file and line, and was read rather than
+        inferred.</li>
+        <li>Spot-check targets: the service table against <code>common-config.yml</code>; the ECR gap
+        against <code>bootstrap.yaml:187–253</code>; the routing defects against
+        <code>GatewayRouteLocatorImpl:68–70</code> and <code>store-core-lb.tf:96</code>.</li>
+        <li><strong>§3 is the one section not yet fully answered</strong> — its structure and levers are
+        complete, its dollar figures are not, and it is blocked on pricing access rather than on
+        analysis.</li>
+      </ul>
+      <p>Implementation begins only after this proposal is approved.</p>
+    </div>
+
+  </main>
+</div>

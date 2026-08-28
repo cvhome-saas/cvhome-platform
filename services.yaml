@@ -1,0 +1,190 @@
+# CVHome service catalog — the single source of truth.
+#
+# Terraform for_eaches this file into ECR repositories, ECS services, task definitions,
+# environment variables, security-group rules, ALB/NLB target groups and Route53 records.
+# Adding a service is one entry here; nothing else needs to change.
+#
+# `scripts/check-catalog-drift.py` fails CI when this file disagrees with the application repo:
+#   names + ports  <- store-commons/autoconfigure/src/main/resources/common-config.yml
+#   service-ports  <- store-commons/autoconfigure/src/main/resources/fargate-config.yml
+#   image paths    <- each service's build.gradle (imageName / imageGroup)
+#
+# FIELDS
+#   port         container port. Must match common-config.yml.
+#   image        ECR repository path. Must match build.gradle exactly — ECR does not
+#                create repositories on push, so a typo here fails the image build.
+#   database     true  -> receives SPRING_DATASOURCE_* env and the RDS password secret.
+#                false -> receives no datasource wiring at all.
+#   runtime      spring | node. Picks the health path and the OTLP protocol/port
+#                (Spring services speak HTTP/4318; the Node UIs speak gRPC/4317).
+#   size         key into the flavour's size table. Right-sizing lives here.
+#   edge         omitted  -> internal only, reachable through the layer's gateway.
+#                alb/nlb  -> gets a target group, and (for alb) host rules + Route53 records.
+#   secrets      env injected from Secrets Manager, as "<secret>:<json-key>".
+#   needs_pod_list  receives COM_ASREVO_CVHOME_PODS[n]_* for every pod in the environment.
+#   extra_env    the genuinely per-service keys. Everything shared is computed once
+#                in the module, never repeated here.
+
+core:
+  store-core-gateway:
+    port: 8000
+    image: store-core/store-core-gateway
+    database: false
+    runtime: spring
+    size: gateway
+    needs_pod_list: true
+    edge:
+      lb: alb
+      # The gateway owns the apex, www, and the console host. `console-ui` is NOT
+      # exposed directly — GatewayRouteLocatorImpl routes that host to lb://console-ui.
+      # The legacy ALB published `seller-ui` here, a host the gateway never matched.
+      hosts: ["@", "www", "console-ui"]
+
+  uaa:
+    port: 8001
+    image: store-core/uaa
+    database: true
+    runtime: spring
+    size: small
+    secrets:
+      COM_ASREVO_CVHOME_ADMIN_PASSWORD: "uaa:COM_ASREVO_CVHOME_ADMIN_PASSWORD"
+    edge:
+      lb: alb
+      hosts: ["uaa"]
+
+  console-ui:
+    port: 8011
+    image: store-core/console-ui
+    database: false
+    runtime: node
+    size: ui
+
+  tenancy:
+    port: 8020
+    image: store-core/tenancy
+    database: true
+    runtime: spring
+    size: small
+    needs_pod_list: true
+
+  billing:
+    port: 8021
+    image: store-core/billing
+    database: true
+    runtime: spring
+    size: small
+    # Stripe lives in billing. The legacy stack injected these into tenancy, and
+    # registered the webhook at a /subscription/... path that no longer exists.
+    secrets:
+      COM_ASREVO_CVHOME_STRIPE_KEY: "stripe:STRIPE_KEY"
+      COM_ASREVO_CVHOME_STRIPE_WEBHOOK: "stripe:STRIPE_WEBHOOK-SIGNING-KEY"
+
+  pod-registry:
+    port: 8022
+    image: store-core/pod-registry
+    database: true
+    runtime: spring
+    size: small
+    needs_pod_list: true
+
+pod:
+  spg:
+    port: 80
+    image: store-pod/spg
+    database: false
+    runtime: caddy
+    size: gateway
+    # Caddy terminates TLS itself with on-demand certificates for custom tenant
+    # domains. 2019 is Caddy's admin API, used as the NLB health check target.
+    ports: [80, 443, 2019]
+    edge:
+      lb: nlb
+      listeners: [80, 443]
+      health_check:
+        port: 2019
+        path: /config/
+    extra_env:
+      ASK_TLS_URL: "http://merchant.${namespace}:8120/api/v1/router/public/ask-for-tls"
+      DOMAIN_LOOKUP_URL: "http://merchant.${namespace}:8120/api/v1/router/public/lookup-by-domain"
+      ACME_CA_URL: "https://acme-v02.api.letsencrypt.org/directory"
+
+  landing-ui:
+    port: 8110
+    image: store-pod/landing-ui
+    database: false
+    runtime: node
+    size: ui
+    extra_env:
+      INTERNAL_SPG: "http://spg.${namespace}:80"
+
+  merchant:
+    port: 8120
+    image: store-pod/merchant
+    database: true
+    runtime: spring
+    size: medium
+    cdn: true
+
+  content:
+    port: 8121
+    image: store-pod/content
+    database: true
+    runtime: spring
+    size: medium
+    cdn: true
+
+  catalog:
+    port: 8122
+    image: store-pod/catalog
+    database: true
+    runtime: spring
+    size: medium
+    cdn: true
+
+  checkout:
+    port: 8123
+    image: store-pod/checkout
+    database: true
+    runtime: spring
+    size: small
+    cdn: true
+
+  cua:
+    port: 8124
+    image: store-pod/cua
+    database: true
+    runtime: spring
+    size: small
+    cdn: true
+
+  payment:
+    port: 8125
+    image: store-pod/payment
+    database: true
+    runtime: spring
+    size: small
+    cdn: true
+
+  inventory:
+    port: 8126
+    image: store-pod/inventory
+    database: true
+    runtime: spring
+    size: small
+    cdn: true
+
+# Infrastructure services — not part of the application, not in common-config.yml,
+# and deliberately excluded from the drift check.
+#
+# The legacy stack ran one collector in store-core AND one in every pod: N+1 for N pods.
+# One per environment is enough — Cloud Map namespaces are private hosted zones in the
+# same VPC, so pod tasks resolve otel-collector.<core-namespace> across the boundary.
+infra:
+  otel-collector:
+    deploy_to: core
+    image: ashraf1abdelrasool/aws-otel-collector:latest
+    external_image: true
+    ports: [4317, 4318]
+    port: 4318
+    size: small
+    flavour_gated: monitoring

@@ -1,0 +1,726 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  CVHome platform bootstrap. Creates only what Terraform cannot create for itself —
+  the state bucket, a scoped deploy role, the environment's config record, and the
+  CodeBuild projects — and then starts the pipeline. Everything else is Terraform.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: Environment }
+        Parameters: [ProjectId, EnvName, Flavour, DomainZoneId]
+      - Label: { default: Store pods }
+        Parameters: [PodCount]
+      - Label: { default: Integrations }
+        Parameters: [StripeKey]
+      - Label: { default: Source }
+        Parameters: [GithubAccount, PlatformRepo, AppRepo, Branch]
+    ParameterLabels:
+      ProjectId: { default: Project id }
+      EnvName: { default: Environment name }
+      Flavour: { default: Flavour }
+      DomainZoneId: { default: Route53 hosted zone }
+      PodCount: { default: Additional store pods }
+      StripeKey: { default: Stripe secret key }
+
+Parameters:
+  ProjectId:
+    Type: String
+    Default: cvhome
+    AllowedPattern: "^[a-z0-9][a-z0-9-]{1,20}$"
+    Description: >-
+      Stable identifier shared by every environment in this account. Deliberately NOT
+      random: the legacy stack generated a random 4-character id here while GitHub
+      Actions derived a different one, so images were pushed where Terraform never
+      looked. Keep this the same across environments.
+
+  EnvName:
+    Type: String
+    Default: dev
+    AllowedPattern: "^[a-z0-9][a-z0-9-]{0,12}$"
+    Description: Environment name. One stack is one environment.
+
+  Flavour:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod, ephemeral]
+    Description: >-
+      Fixes sizing, capacity policy, RDS class and backups, log retention, monitoring
+      and networking as one coherent set. prod runs tasks in private subnets behind a
+      NAT gateway and enables RDS backups and deletion protection.
+
+  DomainZoneId:
+    Type: AWS::Route53::HostedZone::Id
+    Description: The application is served from this zone, and the certificate validated in it.
+
+  PodCount:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    MaxValue: 20
+    Description: >-
+      Store pods IN ADDITION to the default one. Each pod is roughly a second small
+      environment in cost terms — its own RDS instance, network load balancer,
+      CloudFront distribution and nine ECS services.
+
+  StripeKey:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Stripe secret key. Bound to the billing service, which is where Stripe lives.
+
+  GithubAccount:
+    Type: String
+    Default: cvhome-saas
+    AllowedPattern: "^[A-Za-z0-9_-]+$"
+
+  PlatformRepo:
+    Type: String
+    Default: cvhome-platform
+
+  AppRepo:
+    Type: String
+    Default: cvhome
+
+  Branch:
+    Type: String
+    Default: main
+
+Conditions:
+  HasStripeKey: !Not [!Equals [!Ref StripeKey, ""]]
+
+Resources:
+  # ==========================================================================
+  # State bucket — Terraform cannot create the bucket that holds its own state.
+  # ==========================================================================
+
+  TerraformStateBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "${ProjectId}-${EnvName}-tfstate-${AWS::AccountId}-${AWS::Region}"
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      # State locking is native to S3 from Terraform 1.10 (use_lockfile).
+      # No DynamoDB table, no extra cost.
+
+  # ==========================================================================
+  # Secrets — values a human supplied, or that RDS will not mint for us.
+  # ==========================================================================
+
+  StripeSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "/${ProjectId}/${EnvName}/stripe"
+      Description: Stripe credentials, injected into the billing service
+      SecretString: !Sub |
+        {"STRIPE_KEY": "${StripeKey}", "STRIPE_WEBHOOK-SIGNING-KEY": ""}
+
+  UaaSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "/${ProjectId}/${EnvName}/uaa"
+      Description: Initial platform admin credentials for uaa
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "admin"}'
+        GenerateStringKey: COM_ASREVO_CVHOME_ADMIN_PASSWORD
+        PasswordLength: 24
+        ExcludePunctuation: true
+
+  # ==========================================================================
+  # Pod identifiers
+  # ==========================================================================
+
+  PodIdFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  PodIdFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 30
+      Role: !GetAtt PodIdFunctionRole.Arn
+      Code:
+        ZipFile: |
+          import json, os, secrets, time
+          import cfnresponse
+
+          def handler(event, context):
+              try:
+                  if event["RequestType"] == "Delete":
+                      return cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, event["PhysicalResourceId"])
+                  count = int(event["ResourceProperties"].get("PodCount", 0))
+                  # 24 hex characters, the shape the application already uses for pod ids.
+                  ids = [f"{int(time.time()):08x}{secrets.token_hex(8)}" for _ in range(count)]
+                  return cfnresponse.send(
+                      event, context, cfnresponse.SUCCESS,
+                      {"PodIdsJson": json.dumps(ids)},
+                      "podids",
+                  )
+              except Exception as exc:
+                  return cfnresponse.send(event, context, cfnresponse.FAILED, {"Error": str(exc)})
+
+  PodIds:
+    Type: Custom::PodIds
+    Properties:
+      ServiceToken: !GetAtt PodIdFunction.Arn
+      PodCount: !Ref PodCount
+
+  # ==========================================================================
+  # The environment's config record. Terraform reads this; envs/<env>.tfvars
+  # overrides it. Note `env` is a real value here — the legacy template
+  # hardcoded "dev" at bootstrap.yaml:451, so one stack could only ever be dev.
+  # ==========================================================================
+
+  ConfigParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/${ProjectId}/${EnvName}/config"
+      Type: String
+      Description: Generated configuration for this CVHome environment
+      Value: !Sub
+        - |
+          {
+            "project": "${ProjectId}",
+            "env": "${EnvName}",
+            "flavour": "${Flavour}",
+            "region": "${AWS::Region}",
+            "hosted_zone_id": "${DomainZoneId}",
+            "image_tag": "latest",
+            "pod_ids": ${PodIdsJson},
+            "state_bucket": "${TerraformStateBucket}"
+          }
+        - PodIdsJson: !GetAtt PodIds.PodIdsJson
+
+  # ==========================================================================
+  # Deploy role. Explicit statements, not PowerUserAccess + iam:* — which is what
+  # the legacy template granted (bootstrap.yaml:992).
+  # ==========================================================================
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectId}-${EnvName}-deploy"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: codebuild.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: infrastructure
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Resource-level scoping is not expressible for most of these
+              # (VPC creation has no ARN to name in advance), so the narrowing that
+              # matters is by service and by region, plus the IAM boundary below.
+              - Sid: Infrastructure
+                Effect: Allow
+                Action:
+                  - ec2:*
+                  - ecs:*
+                  - ecr:*
+                  - elasticloadbalancing:*
+                  - rds:*
+                  - servicediscovery:*
+                  - application-autoscaling:*
+                  - logs:*
+                  - cloudwatch:*
+                  - acm:*
+                  - route53:*
+                  - cloudfront:*
+                  - s3:*
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: [!Ref "AWS::Region", us-east-1]
+
+              - Sid: ReadConfigAndSecrets
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - secretsmanager:DescribeSecret
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:ListSecretVersionIds
+                Resource:
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectId}/*"
+                  - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:/${ProjectId}/*"
+
+              # RDS-managed master passwords land in Secrets Manager under an
+              # AWS-chosen name, so this cannot be scoped by prefix.
+              - Sid: RdsManagedSecrets
+                Effect: Allow
+                Action:
+                  - secretsmanager:CreateSecret
+                  - secretsmanager:TagResource
+                  - secretsmanager:RotateSecret
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: !Ref "AWS::Region"
+
+              # The legacy role held iam:* outright. This can only touch roles it
+              # created for this project's own tasks.
+              - Sid: ScopedIam
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:TagRole
+                  - iam:PassRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                Resource:
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/${ProjectId}-${EnvName}-*"
+
+              - Sid: ServiceLinkedRoles
+                Effect: Allow
+                Action: iam:CreateServiceLinkedRole
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    iam:AWSServiceName:
+                      - ecs.amazonaws.com
+                      - rds.amazonaws.com
+                      - elasticloadbalancing.amazonaws.com
+                      - application-autoscaling.amazonaws.com
+
+        - PolicyName: terraform-state
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [s3:ListBucket, s3:GetBucketLocation]
+                Resource: !GetAtt TerraformStateBucket.Arn
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Resource: !Sub "${TerraformStateBucket.Arn}/*"
+
+        - PolicyName: logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"
+
+  BuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectId}-${EnvName}-build"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: codebuild.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: build
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: EcrAuth
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Sid: EcrPushThisProject
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:CompleteLayerUpload
+                  - ecr:InitiateLayerUpload
+                  - ecr:PutImage
+                  - ecr:UploadLayerPart
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource: !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${ProjectId}/*"
+              - Sid: ReadConfig
+                Effect: Allow
+                Action: [ssm:GetParameter, ssm:GetParameters]
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectId}/*"
+              - Sid: Logs
+                Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"
+
+  # ==========================================================================
+  # Pipeline: prereq apply -> image build -> env apply.
+  # ==========================================================================
+
+  PrereqProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${ProjectId}-${EnvName}-1-prereq"
+      Description: ECR repositories and the ACM certificate, from the service catalog
+      ServiceRole: !GetAtt DeployRole.Arn
+      Artifacts: { Type: NO_ARTIFACTS }
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - { Name: PROJECT_ID, Value: !Ref ProjectId }
+          - { Name: ENV_NAME, Value: !Ref EnvName }
+          - { Name: TF_STATE_BUCKET, Value: !Ref TerraformStateBucket }
+      Source:
+        Type: GITHUB
+        Location: !Sub "https://github.com/${GithubAccount}/${PlatformRepo}.git"
+        BuildSpec: |
+          version: 0.2
+          phases:
+            install:
+              commands:
+                - cd /usr/local/bin
+                - wget -q https://releases.hashicorp.com/terraform/1.14.6/terraform_1.14.6_linux_amd64.zip
+                - unzip -o -q terraform_1.14.6_linux_amd64.zip && terraform version
+                - cd $CODEBUILD_SRC_DIR
+            build:
+              commands:
+                - cd prereq
+                - |
+                  terraform init -input=false \
+                    -backend-config="bucket=$TF_STATE_BUCKET" \
+                    -backend-config="key=prereq/$ENV_NAME/terraform.tfstate" \
+                    -backend-config="region=$AWS_REGION"
+                - |
+                  terraform apply -auto-approve -input=false \
+                    -var="project=$PROJECT_ID" \
+                    -var="env=$ENV_NAME" \
+                    -var="region=$AWS_REGION"
+            post_build:
+              commands:
+                # ECR does not create repositories on push. If this count is wrong,
+                # the image build fails and it is not obvious why.
+                - terraform output repository_count
+      SourceVersion: !Ref Branch
+      TimeoutInMinutes: 30
+
+  ImageBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${ProjectId}-${EnvName}-2-images"
+      Description: Build and push all 15 service images
+      ServiceRole: !GetAtt BuildRole.Arn
+      Artifacts: { Type: NO_ARTIFACTS }
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_LARGE
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - { Name: PROJECT_ID, Value: !Ref ProjectId }
+          - Name: REGISTRY
+            Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ProjectId}"
+          - Name: GRADLE_OPTS
+            Value: >-
+              -Dorg.gradle.jvmargs=-Xmx10g
+              -Dorg.gradle.daemon=false
+              -Dorg.gradle.parallel=true
+              -Dorg.gradle.caching=true
+      Source:
+        Type: GITHUB
+        Location: !Sub "https://github.com/${GithubAccount}/${AppRepo}.git"
+        BuildSpec: |
+          version: 0.2
+          phases:
+            install:
+              runtime-versions:
+                java: corretto25
+            pre_build:
+              commands:
+                - export ECR_TOKEN=$(aws ecr get-login-password --region $AWS_REGION)
+                - echo "$ECR_TOKEN" | docker login --username AWS --password-stdin "${REGISTRY%%/*}"
+            build:
+              commands:
+                - chmod +x gradlew
+                - ./gradlew bootBuildImage --publishImage -x test -x check --no-daemon --parallel --build-cache
+      SourceVersion: !Ref Branch
+      TimeoutInMinutes: 120
+
+  EnvProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${ProjectId}-${EnvName}-3-apply"
+      Description: Provision the environment
+      ServiceRole: !GetAtt DeployRole.Arn
+      Artifacts: { Type: NO_ARTIFACTS }
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - { Name: PROJECT_ID, Value: !Ref ProjectId }
+          - { Name: ENV_NAME, Value: !Ref EnvName }
+          - { Name: FLAVOUR, Value: !Ref Flavour }
+          - { Name: TF_STATE_BUCKET, Value: !Ref TerraformStateBucket }
+          - { Name: STRIPE_SECRET, Value: !Ref StripeSecret }
+      Source:
+        Type: GITHUB
+        Location: !Sub "https://github.com/${GithubAccount}/${PlatformRepo}.git"
+        BuildSpec: |
+          version: 0.2
+          phases:
+            install:
+              commands:
+                - cd /usr/local/bin
+                - wget -q https://releases.hashicorp.com/terraform/1.14.6/terraform_1.14.6_linux_amd64.zip
+                - unzip -o -q terraform_1.14.6_linux_amd64.zip && terraform version
+                - cd $CODEBUILD_SRC_DIR
+            build:
+              commands:
+                - |
+                  terraform init -input=false \
+                    -backend-config="bucket=$TF_STATE_BUCKET" \
+                    -backend-config="key=env/$ENV_NAME/terraform.tfstate" \
+                    -backend-config="region=$AWS_REGION"
+                - VARFILE="envs/$ENV_NAME.tfvars"; [ -f "$VARFILE" ] || VARFILE="envs/dev.tfvars"
+                - |
+                  terraform apply -auto-approve -input=false \
+                    -var="project=$PROJECT_ID" \
+                    -var="env=$ENV_NAME" \
+                    -var="flavour=$FLAVOUR" \
+                    -var="region=$AWS_REGION" \
+                    -var-file="$VARFILE"
+            post_build:
+              commands:
+                - terraform output -json > outputs.json
+                # Registered here, not in CloudFormation, because the domain only
+                # exists once the environment is up. The legacy template registered
+                # /subscription/api/v1/... at bootstrap time — a path that did not
+                # survive the tenancy/billing split.
+                - |
+                  DOMAIN=$(terraform output -raw console_url 2>/dev/null | sed 's#https://console-ui\.##')
+                  if [ -n "$DOMAIN" ]; then
+                    scripts/register-stripe-webhook.sh "https://$DOMAIN/billing/api/v1/stripe-webhook/public/events"
+                  fi
+                - terraform output console_url
+      SourceVersion: !Ref Branch
+      TimeoutInMinutes: 60
+
+  DestroyProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${ProjectId}-${EnvName}-destroy"
+      Description: Tear the environment down
+      ServiceRole: !GetAtt DeployRole.Arn
+      Artifacts: { Type: NO_ARTIFACTS }
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - { Name: PROJECT_ID, Value: !Ref ProjectId }
+          - { Name: ENV_NAME, Value: !Ref EnvName }
+          - { Name: FLAVOUR, Value: !Ref Flavour }
+          - { Name: TF_STATE_BUCKET, Value: !Ref TerraformStateBucket }
+      Source:
+        Type: GITHUB
+        Location: !Sub "https://github.com/${GithubAccount}/${PlatformRepo}.git"
+        BuildSpec: |
+          version: 0.2
+          phases:
+            install:
+              commands:
+                - cd /usr/local/bin
+                - wget -q https://releases.hashicorp.com/terraform/1.14.6/terraform_1.14.6_linux_amd64.zip
+                - unzip -o -q terraform_1.14.6_linux_amd64.zip
+                - cd $CODEBUILD_SRC_DIR
+            build:
+              commands:
+                - |
+                  terraform init -input=false \
+                    -backend-config="bucket=$TF_STATE_BUCKET" \
+                    -backend-config="key=env/$ENV_NAME/terraform.tfstate" \
+                    -backend-config="region=$AWS_REGION"
+                - VARFILE="envs/$ENV_NAME.tfvars"; [ -f "$VARFILE" ] || VARFILE="envs/dev.tfvars"
+                - |
+                  terraform destroy -auto-approve -input=false \
+                    -var="project=$PROJECT_ID" -var="env=$ENV_NAME" \
+                    -var="flavour=$FLAVOUR" -var="region=$AWS_REGION" \
+                    -var-file="$VARFILE"
+      SourceVersion: !Ref Branch
+      TimeoutInMinutes: 60
+
+  # ==========================================================================
+  # Start the pipeline. Nothing did this in the legacy template, which is why its
+  # "one-click" deploy completed the stack and then provisioned nothing.
+  # ==========================================================================
+
+  PipelineStarterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: start-builds
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: codebuild:StartBuild
+                Resource:
+                  - !GetAtt PrereqProject.Arn
+                  - !GetAtt ImageBuildProject.Arn
+                  - !GetAtt EnvProject.Arn
+
+  PipelineStarterFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 60
+      Role: !GetAtt PipelineStarterRole.Arn
+      Environment:
+        Variables:
+          PREREQ_PROJECT: !Ref PrereqProject
+      Code:
+        ZipFile: |
+          import os
+          import boto3
+          import cfnresponse
+
+          def handler(event, context):
+              try:
+                  if event["RequestType"] != "Create":
+                      return cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, "starter")
+                  # Only the first stage is started here. Each stage chains the next
+                  # via its own EventBridge rule, so a failure stops the pipeline
+                  # instead of racing ahead to an apply that cannot work.
+                  build = boto3.client("codebuild").start_build(
+                      projectName=os.environ["PREREQ_PROJECT"]
+                  )
+                  return cfnresponse.send(
+                      event, context, cfnresponse.SUCCESS,
+                      {"BuildId": build["build"]["id"]}, "starter",
+                  )
+              except Exception as exc:
+                  # A failed kickoff must not roll back a stack that is otherwise fine;
+                  # the pipeline can be started by hand from the console.
+                  return cfnresponse.send(
+                      event, context, cfnresponse.SUCCESS, {"Error": str(exc)}, "starter",
+                  )
+
+  StartPipeline:
+    Type: Custom::StartPipeline
+    DependsOn: [ConfigParameter, StripeSecret, UaaSecret]
+    Properties:
+      ServiceToken: !GetAtt PipelineStarterFunction.Arn
+
+  # --- chaining: each stage starts the next only when it succeeds -------------
+
+  PipelineChainRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: events.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: start-next
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: codebuild:StartBuild
+                Resource:
+                  - !GetAtt ImageBuildProject.Arn
+                  - !GetAtt EnvProject.Arn
+
+  PrereqSucceededRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: prereq succeeded -> build images
+      EventPattern:
+        source: [aws.codebuild]
+        detail-type: ["CodeBuild Build State Change"]
+        detail:
+          build-status: [SUCCEEDED]
+          project-name: [!Ref PrereqProject]
+      Targets:
+        - Id: images
+          Arn: !GetAtt ImageBuildProject.Arn
+          RoleArn: !GetAtt PipelineChainRole.Arn
+
+  ImagesSucceededRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: images pushed -> provision the environment
+      EventPattern:
+        source: [aws.codebuild]
+        detail-type: ["CodeBuild Build State Change"]
+        detail:
+          build-status: [SUCCEEDED]
+          project-name: [!Ref ImageBuildProject]
+      Targets:
+        - Id: apply
+          Arn: !GetAtt EnvProject.Arn
+          RoleArn: !GetAtt PipelineChainRole.Arn
+
+Outputs:
+  ProjectId:
+    Description: Use this same id for every environment in this account
+    Value: !Ref ProjectId
+    Export:
+      Name: !Sub "${AWS::StackName}-ProjectId"
+
+  Environment:
+    Value: !Ref EnvName
+
+  Flavour:
+    Value: !Ref Flavour
+
+  StateBucket:
+    Value: !Ref TerraformStateBucket
+
+  Registry:
+    Description: REGISTRY for the application's own publish workflow
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ProjectId}"
+
+  ConfigParameterName:
+    Description: Where the app's publish workflow reads the project id from
+    Value: !Ref ConfigParameter
+
+  PipelineConsole:
+    Description: Watch the three stages here
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/codesuite/codebuild/projects?region=${AWS::Region}"
+
+  StripeWebhookPath:
+    Description: The path billing actually serves
+    Value: /billing/api/v1/stripe-webhook/public/events
+    Condition: HasStripeKey

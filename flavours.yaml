@@ -1,0 +1,127 @@
+# Environment flavours — one named bundle per environment shape.
+#
+# This replaces the legacy is_prod / is_monitoring / pod_auto_scale / pod_size flags.
+# Four independent booleans is sixteen configurations nobody tested; a flavour is one
+# name that fixes the whole set coherently. Any key can still be overridden per
+# environment in envs/<env>.tfvars — see var.flavour_overrides.
+#
+# `sizes` is the right-sizing table. Services name a size in services.yaml rather than
+# carrying numbers, so changing what "small" means moves every small service at once.
+# The legacy stack gave all 15 services an identical 512/1024, which is the single
+# largest easy cost win — and because pod services are billed once per pod, the saving
+# multiplies by pod count.
+
+dev:
+  description: "Cheapest thing that runs the whole product. Not for anyone's data."
+  sizes:
+    gateway: { cpu: 512, memory: 1024 }
+    medium:  { cpu: 512, memory: 1024 }
+    small:   { cpu: 256, memory: 512 }
+    ui:      { cpu: 256, memory: 512 }
+  desired_count: 1
+  autoscale: false
+  capacity:
+    # Pure Spot is fine where an interruption is an inconvenience, not an outage.
+    on_demand_base: 0
+    on_demand_percent: 0
+  health_check_grace_seconds: 90
+  log_retention_days: 7
+  monitoring: false
+  private_tasks: false
+  nat_gateway: false
+  rds:
+    instance_class: db.t4g.micro
+    allocated_storage: 20
+    max_allocated_storage: 0
+    backup_retention_days: 0
+    deletion_protection: false
+    skip_final_snapshot: true
+    multi_az: false
+    storage_encrypted: true
+    performance_insights: false
+
+staging:
+  description: "Production's shape at a fraction of its size. Rehearsal, not theatre."
+  sizes:
+    gateway: { cpu: 512, memory: 1024 }
+    medium:  { cpu: 512, memory: 1024 }
+    small:   { cpu: 256, memory: 512 }
+    ui:      { cpu: 512, memory: 1024 }
+  desired_count: 1
+  autoscale: false
+  capacity:
+    on_demand_base: 1
+    on_demand_percent: 0
+  health_check_grace_seconds: 120
+  log_retention_days: 14
+  monitoring: true
+  private_tasks: false
+  nat_gateway: false
+  rds:
+    instance_class: db.t4g.small
+    allocated_storage: 20
+    max_allocated_storage: 100
+    backup_retention_days: 1
+    deletion_protection: false
+    skip_final_snapshot: true
+    multi_az: false
+    storage_encrypted: true
+    performance_insights: false
+
+prod:
+  description: "Tenant data lives here. Reliability wins every tie."
+  sizes:
+    gateway: { cpu: 1024, memory: 2048 }
+    medium:  { cpu: 1024, memory: 2048 }
+    small:   { cpu: 512,  memory: 1024 }
+    ui:      { cpu: 512,  memory: 1024 }
+  desired_count: 2
+  autoscale: true
+  capacity:
+    # An on-demand base means a Spot reclamation degrades capacity instead of
+    # ending the service. The legacy stack ran weight-100 Spot at desired=1.
+    on_demand_base: 1
+    on_demand_percent: 50
+  health_check_grace_seconds: 180
+  log_retention_days: 30
+  monitoring: true
+  private_tasks: true
+  nat_gateway: true
+  rds:
+    instance_class: db.t4g.small
+    allocated_storage: 50
+    max_allocated_storage: 500
+    backup_retention_days: 7
+    deletion_protection: true
+    skip_final_snapshot: false
+    multi_az: false
+    storage_encrypted: true
+    performance_insights: true
+
+ephemeral:
+  description: "Throwaway. Spun up for a branch or a demo, destroyed without ceremony."
+  sizes:
+    gateway: { cpu: 256, memory: 512 }
+    medium:  { cpu: 256, memory: 512 }
+    small:   { cpu: 256, memory: 512 }
+    ui:      { cpu: 256, memory: 512 }
+  desired_count: 1
+  autoscale: false
+  capacity:
+    on_demand_base: 0
+    on_demand_percent: 0
+  health_check_grace_seconds: 90
+  log_retention_days: 1
+  monitoring: false
+  private_tasks: false
+  nat_gateway: false
+  rds:
+    instance_class: db.t4g.micro
+    allocated_storage: 20
+    max_allocated_storage: 0
+    backup_retention_days: 0
+    deletion_protection: false
+    skip_final_snapshot: true
+    multi_az: false
+    storage_encrypted: true
+    performance_insights: false

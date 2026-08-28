@@ -1,0 +1,248 @@
+data "aws_region" "current" {}
+data "aws_caller_identity" "current" {}
+
+locals {
+  # <layer>-<service> keeps store-core-gateway distinct from a pod's gateway, and keeps
+  # per-pod services distinct from each other (layer carries the pod id).
+  qualified_name = "${var.layer}-${var.name}"
+  prefix         = "${var.project}-${var.env}"
+
+  log_group = "/aws/ecs/${var.project}/${var.env}/${var.layer}/${var.name}"
+}
+
+# --------------------------------------------------------------------- security group
+
+resource "aws_security_group" "this" {
+  name        = "${local.prefix}-${local.qualified_name}"
+  description = "Ingress on ${var.name}'s own ports only"
+  vpc_id      = var.vpc_id
+
+  tags = merge(var.tags, { Name = "${local.prefix}-${local.qualified_name}" })
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# One rule per port the container actually listens on. The legacy module opened
+# 0-65535 for every service, so any compromised task could reach any other.
+resource "aws_vpc_security_group_ingress_rule" "vpc" {
+  for_each = toset([for p in var.ports : tostring(p)])
+
+  security_group_id = aws_security_group.this.id
+  description       = "In-VPC traffic to ${var.name}:${each.value}"
+  cidr_ipv4         = var.vpc_cidr_block
+  ip_protocol       = "tcp"
+  from_port         = tonumber(each.value)
+  to_port           = tonumber(each.value)
+
+  tags = var.tags
+}
+
+resource "aws_vpc_security_group_ingress_rule" "load_balancer" {
+  for_each = var.load_balancer_security_group_id == null ? toset([]) : toset([for p in var.ports : tostring(p)])
+
+  security_group_id            = aws_security_group.this.id
+  description                  = "Load balancer to ${var.name}:${each.value}"
+  referenced_security_group_id = var.load_balancer_security_group_id
+  ip_protocol                  = "tcp"
+  from_port                    = tonumber(each.value)
+  to_port                      = tonumber(each.value)
+
+  tags = var.tags
+}
+
+resource "aws_vpc_security_group_egress_rule" "all" {
+  security_group_id = aws_security_group.this.id
+  description       = "Outbound: image pulls, AWS APIs, ACME, Stripe"
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
+
+  tags = var.tags
+}
+
+# ------------------------------------------------------------------------- logging
+
+resource "aws_cloudwatch_log_group" "this" {
+  name              = local.log_group
+  retention_in_days = var.log_retention_days
+  tags              = var.tags
+}
+
+# ---------------------------------------------------------------------- task defs
+
+resource "aws_ecs_task_definition" "this" {
+  family                   = "${local.prefix}-${local.qualified_name}"
+  cpu                      = var.cpu
+  memory                   = var.memory
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  task_role_arn            = aws_iam_role.task.arn
+  execution_role_arn       = aws_iam_role.execution.arn
+
+  container_definitions = jsonencode([
+    {
+      name        = var.name
+      image       = var.image
+      essential   = true
+      environment = var.environment
+      secrets     = var.secrets
+
+      portMappings = [
+        for p in var.ports : {
+          name          = "${var.name}-${p}"
+          containerPort = p
+          hostPort      = p
+          protocol      = "tcp"
+        }
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.this.name
+          awslogs-region        = data.aws_region.current.region
+          awslogs-stream-prefix = "ecs"
+        }
+      }
+    }
+  ])
+
+  tags = var.tags
+}
+
+# ------------------------------------------------------------------------ discovery
+
+# A records, not SRV: Caddy (spg) cannot consume SRV, and the application's
+# ecs-service-discoveryclient resolves plain A records via DiscoverInstances.
+resource "aws_service_discovery_service" "this" {
+  name = var.name
+
+  dns_config {
+    namespace_id   = var.namespace_id
+    routing_policy = "MULTIVALUE"
+
+    dns_records {
+      ttl  = 10
+      type = "A"
+    }
+  }
+
+  tags = var.tags
+}
+
+# -------------------------------------------------------------------------- service
+
+resource "aws_ecs_service" "this" {
+  name            = var.name
+  cluster         = var.cluster_name
+  task_definition = aws_ecs_task_definition.this.arn
+  desired_count   = var.desired_count
+
+  # Only meaningful when a load balancer is attached; harmless otherwise.
+  health_check_grace_period_seconds = length(var.target_groups) > 0 ? var.health_check_grace_seconds : null
+
+  network_configuration {
+    subnets          = var.subnets
+    assign_public_ip = var.assign_public_ip
+    security_groups  = [aws_security_group.this.id]
+  }
+
+  service_registries {
+    registry_arn   = aws_service_discovery_service.this.arn
+    container_name = var.name
+  }
+
+  dynamic "load_balancer" {
+    for_each = var.target_groups
+    content {
+      target_group_arn = load_balancer.value.arn
+      container_name   = var.name
+      container_port   = load_balancer.value.port
+    }
+  }
+
+  # An on-demand base keeps the service alive through a Spot reclamation.
+  dynamic "capacity_provider_strategy" {
+    for_each = var.capacity.on_demand_base > 0 || var.capacity.on_demand_percent > 0 ? [1] : []
+    content {
+      capacity_provider = "FARGATE"
+      base              = var.capacity.on_demand_base
+      weight            = var.capacity.on_demand_percent
+    }
+  }
+
+  capacity_provider_strategy {
+    capacity_provider = "FARGATE_SPOT"
+    weight            = 100 - var.capacity.on_demand_percent
+  }
+
+  deployment_controller {
+    type = "ECS"
+  }
+
+  # A bad task definition rolls itself back instead of sitting in a crash loop.
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  tags = var.tags
+
+  lifecycle {
+    # Autoscaling owns desired_count once it is attached.
+    ignore_changes = [desired_count]
+  }
+
+  depends_on = [aws_iam_role_policy.execution]
+}
+
+# ----------------------------------------------------------------------- autoscaling
+
+resource "aws_appautoscaling_target" "this" {
+  count = var.autoscale ? 1 : 0
+
+  min_capacity       = var.desired_count
+  max_capacity       = var.desired_count * 3
+  resource_id        = "service/${var.cluster_name}/${aws_ecs_service.this.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  service_namespace  = "ecs"
+}
+
+resource "aws_appautoscaling_policy" "cpu" {
+  count = var.autoscale ? 1 : 0
+
+  name               = "${local.prefix}-${local.qualified_name}-cpu"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.this[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.this[0].scalable_dimension
+  service_namespace  = aws_appautoscaling_target.this[0].service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+    target_value       = 60
+    scale_in_cooldown  = 300
+    scale_out_cooldown = 60
+  }
+}
+
+resource "aws_appautoscaling_policy" "memory" {
+  count = var.autoscale ? 1 : 0
+
+  name               = "${local.prefix}-${local.qualified_name}-mem"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.this[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.this[0].scalable_dimension
+  service_namespace  = aws_appautoscaling_target.this[0].service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageMemoryUtilization"
+    }
+    target_value       = 70
+    scale_in_cooldown  = 300
+    scale_out_cooldown = 60
+  }
+}

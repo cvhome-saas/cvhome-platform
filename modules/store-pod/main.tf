@@ -1,0 +1,184 @@
+locals {
+  layer     = "store-pod-${var.pod.short}"
+  prefix    = "${var.project}-${var.env}"
+  namespace = "${local.layer}.${var.project}-${var.env}.lcl"
+
+  profiles = join(",", compact(["fargate", var.test_stores ? "test-stores" : ""]))
+
+  pod_fqdn = "${var.pod.domain}.${var.domain}"
+  endpoint = "https://${local.pod_fqdn}"
+
+  # ------------------------------------------------------------------ env, once
+  #
+  # store-pod-cluster.tf was 654 lines because these ~25 variables were pasted into
+  # six service blocks. Here they are written once. Adding a seventh Spring service
+  # costs a catalog entry and nothing else.
+
+  # Telemetry crosses into the core namespace: one collector per environment, not one
+  # per pod. Both namespaces are private hosted zones on the same VPC, so this resolves.
+  otlp_endpoint = "http://otel-collector.${var.core_namespace}"
+
+  # Every pod service is discoverable at this pod's namespace. Generated from the
+  # catalog, so the legacy inconsistency — payment listing PAYMENT but not CUA, and
+  # every other service listing a different subset — cannot recur.
+  service_namespace_env = [
+    for name, _ in var.services :
+    { name = "COM_ASREVO_CVHOME_SERVICES_${upper(replace(name, "-", "_"))}_NAMESPACE", value = local.namespace }
+  ]
+
+  common_spring_env = concat([
+    { name = "SPRING_PROFILES_ACTIVE", value = local.profiles },
+    { name = "OTEL_SDK_DISABLED", value = tostring(!var.flavour.monitoring) },
+    { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "${local.otlp_endpoint}:4318" },
+    { name = "COM_ASREVO_CVHOME_APP_DOMAIN", value = var.domain },
+    { name = "COM_ASREVO_CVHOME_POD_DOMAIN", value = local.pod_fqdn },
+    { name = "COM_ASREVO_CVHOME_SERVICES_STORE-CORE-GATEWAY_SCHEMA", value = "https" },
+    { name = "COM_ASREVO_CVHOME_SERVICES_STORE-CORE-GATEWAY_PORT", value = "443" },
+    { name = "COM_ASREVO_CVHOME_SERVICES_UAA_SCHEMA", value = "https" },
+    { name = "COM_ASREVO_CVHOME_SERVICES_UAA_PORT", value = "443" },
+    { name = "COM_ASREVO_CVHOME_SERVICES_SPG_SCHEMA", value = "https" },
+    { name = "COM_ASREVO_CVHOME_SERVICES_SPG_PORT", value = "443" },
+    { name = "SPRING_CLOUD_ECS_DISCOVERY_NAMESPACE", value = local.namespace },
+    # Underscore, not the legacy "NAMESPACE-ID": a hyphen is not a valid POSIX
+    # environment variable name, and this is the form Spring relaxed binding expects.
+    { name = "SPRING_CLOUD_ECS_DISCOVERY_NAMESPACE_ID", value = aws_service_discovery_private_dns_namespace.this.id },
+    { name = "COM_ASREVO_CVHOME_POD-INFO_POD_ID", value = var.pod.id },
+    { name = "COM_ASREVO_CVHOME_POD-INFO_POD_NAME", value = var.pod.name },
+    { name = "COM_ASREVO_CVHOME_POD-INFO_POD_ENDPOINT_ENDPOINT", value = local.endpoint },
+    { name = "COM_ASREVO_CVHOME_POD-INFO_POD_ENDPOINT_TYPE", value = "EXTERNAL" },
+    { name = "COM_ASREVO_CVHOME_POD-INFO_POD_DOMAIN", value = local.pod_fqdn },
+  ], local.service_namespace_env)
+
+  cdn_env = [
+    { name = "COM_ASREVO_CVHOME_CDN_STORAGE_PROVIDER", value = "S3" },
+    { name = "COM_ASREVO_CVHOME_CDN_STORAGE_BUCKET", value = aws_s3_bucket.cdn.id },
+    { name = "COM_ASREVO_CVHOME_CDN_BASE-PATH", value = "https://${aws_cloudfront_distribution.cdn.domain_name}" },
+  ]
+
+  database_env = [
+    { name = "SPRING_DATASOURCE_DATABASE", value = aws_db_instance.this.db_name },
+    { name = "SPRING_DATASOURCE_HOST", value = aws_db_instance.this.address },
+    { name = "SPRING_DATASOURCE_PORT", value = tostring(aws_db_instance.this.port) },
+    { name = "SPRING_DATASOURCE_USERNAME", value = aws_db_instance.this.username },
+  ]
+
+  database_secret = [
+    { name = "SPRING_DATASOURCE_PASSWORD", valueFrom = "${aws_db_instance.this.master_user_secret[0].secret_arn}:password::" },
+  ]
+
+  node_env = [
+    { name = "OTEL_EXPORTER_OTLP_PROTOCOL", value = "grpc" },
+    { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "${local.otlp_endpoint}:4317" },
+  ]
+
+  # Caddy's own configuration, not Spring's.
+  caddy_env = [
+    { name = "NAMESPACE", value = local.namespace },
+    { name = "CERT_BUCKET", value = aws_s3_bucket.certs.id },
+    { name = "CERT_BUCKET_REGION", value = aws_s3_bucket.certs.region },
+    { name = "DOMAIN_LOOKUP_TTL", value = var.env == "prod" ? "5m" : "1m" },
+    { name = "OTEL_SERVICE_NAME", value = "spg" },
+    { name = "OTEL_EXPORTER_OTLP_PROTOCOL", value = "grpc" },
+    { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "${local.otlp_endpoint}:4317" },
+  ]
+
+  services = {
+    for name, svc in var.services : name => merge(svc, {
+      image = "${var.docker_registry}/${svc.image}:${var.image_tag}"
+      size  = var.flavour.sizes[svc.size]
+      ports = try(svc.ports, [svc.port])
+
+      environment = concat(
+        svc.runtime == "spring" ? local.common_spring_env : [],
+        svc.runtime == "node" ? concat(local.node_env, [{ name = "OTEL_SERVICE_NAME", value = name }]) : [],
+        svc.runtime == "caddy" ? local.caddy_env : [],
+        try(svc.cdn, false) ? local.cdn_env : [],
+        try(svc.database, false) ? local.database_env : [],
+        # extra_env may reference ${namespace}; nothing else is interpolated.
+        [for k, v in try(svc.extra_env, {}) : { name = k, value = replace(v, "$${namespace}", local.namespace) }],
+      )
+
+      secrets = try(svc.database, false) ? local.database_secret : []
+
+      secret_arns = try(svc.database, false) ? [aws_db_instance.this.master_user_secret[0].secret_arn] : []
+
+      # Only the services that actually touch a bucket get bucket permissions.
+      s3_bucket_arns = compact([
+        try(svc.cdn, false) ? aws_s3_bucket.cdn.arn : "",
+        svc.runtime == "caddy" ? aws_s3_bucket.certs.arn : "",
+      ])
+    })
+  }
+}
+
+# ------------------------------------------------------------------------- discovery
+
+resource "aws_service_discovery_private_dns_namespace" "this" {
+  name        = local.namespace
+  description = "Service discovery for pod ${var.pod.name} in ${var.env}"
+  vpc         = var.vpc_id
+  tags        = var.tags
+}
+
+# --------------------------------------------------------------------------- cluster
+
+resource "aws_ecs_cluster" "this" {
+  name = "${local.prefix}-${local.layer}"
+
+  setting {
+    name  = "containerInsights"
+    value = var.flavour.monitoring ? "enabled" : "disabled"
+  }
+
+  tags = var.tags
+}
+
+resource "aws_ecs_cluster_capacity_providers" "this" {
+  cluster_name       = aws_ecs_cluster.this.name
+  capacity_providers = ["FARGATE", "FARGATE_SPOT"]
+}
+
+# -------------------------------------------------------------------------- services
+
+module "service" {
+  source   = "../ecs-service"
+  for_each = local.services
+
+  name    = each.key
+  project = var.project
+  env     = var.env
+  layer   = local.layer
+
+  cluster_name     = aws_ecs_cluster.this.name
+  namespace_id     = aws_service_discovery_private_dns_namespace.this.id
+  vpc_id           = var.vpc_id
+  vpc_cidr_block   = var.vpc_cidr_block
+  subnets          = var.task_subnet_ids
+  assign_public_ip = var.assign_public_ip
+
+  image       = each.value.image
+  ports       = each.value.ports
+  environment = each.value.environment
+  secrets     = each.value.secrets
+
+  cpu                        = each.value.size.cpu
+  memory                     = each.value.size.memory
+  desired_count              = var.flavour.desired_count
+  autoscale                  = var.flavour.autoscale
+  capacity                   = var.flavour.capacity
+  health_check_grace_seconds = var.flavour.health_check_grace_seconds
+  log_retention_days         = var.flavour.log_retention_days
+
+  # spg attaches to both NLB listeners; everything else is internal to the pod.
+  target_groups = try(each.value.edge.lb, "") == "nlb" ? {
+    for port in each.value.edge.listeners : "tcp-${port}" => {
+      arn  = aws_lb_target_group.spg[tostring(port)].arn
+      port = port
+    }
+  } : {}
+
+  secret_arns    = each.value.secret_arns
+  s3_bucket_arns = each.value.s3_bucket_arns
+
+  tags = merge(var.tags, { Service = each.key, Pod = var.pod.name })
+}

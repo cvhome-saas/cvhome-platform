@@ -1,0 +1,233 @@
+locals {
+  layer     = "store-core"
+  prefix    = "${var.project}-${var.env}"
+  namespace = "store-core.${var.project}-${var.env}.lcl"
+
+  profiles = join(",", compact(["fargate", var.test_stores ? "test-stores" : ""]))
+
+  # The default pod's namespace, which core services use to reach pod services.
+  default_pod = try(var.pods["pod-1"], null)
+
+  # ---------------------------------------------------------------- env, computed once
+  #
+  # This block is the whole point of the catalog. The legacy store-core-cluster.tf
+  # repeated ~25 of these lines inside each service definition, and store-pod-cluster.tf
+  # repeated them six times over 654 lines. They are computed here exactly once and
+  # merged with whatever a service genuinely needs on its own.
+
+  otlp_endpoint = "http://otel-collector.${local.namespace}"
+
+  common_spring_env = [
+    { name = "SPRING_PROFILES_ACTIVE", value = local.profiles },
+    { name = "OTEL_SDK_DISABLED", value = tostring(!var.flavour.monitoring) },
+    { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "${local.otlp_endpoint}:4318" },
+    { name = "COM_ASREVO_CVHOME_APP_DOMAIN", value = var.domain },
+    { name = "COM_ASREVO_CVHOME_APP_HANDLERS[0].schema", value = "https" },
+    { name = "COM_ASREVO_CVHOME_APP_HANDLERS[0].port", value = "443" },
+    { name = "SPRING_CLOUD_ECS_DISCOVERY_NAMESPACE", value = local.namespace },
+    # Underscore, not the legacy "NAMESPACE-ID": a hyphen is not a valid POSIX
+    # environment variable name, and this is the form Spring relaxed binding expects.
+    { name = "SPRING_CLOUD_ECS_DISCOVERY_NAMESPACE_ID", value = aws_service_discovery_private_dns_namespace.this.id },
+  ]
+
+  # Every service is reachable over TLS at the edge on 443, whatever its container port.
+  # Generated from the catalog so a renamed service cannot leave a stale entry behind.
+  edge_scheme_env = flatten([
+    for name, svc in var.services : [
+      { name = "COM_ASREVO_CVHOME_SERVICES_${upper(replace(name, "-", "_"))}_SCHEMA", value = "https" },
+      { name = "COM_ASREVO_CVHOME_SERVICES_${upper(replace(name, "-", "_"))}_PORT", value = "443" },
+    ] if try(svc.edge.lb, "") == "alb"
+  ])
+
+  # spg lives in the pod layer but core services address it over the edge.
+  spg_env = local.default_pod == null ? [] : [
+    { name = "COM_ASREVO_CVHOME_SERVICES_SPG_SCHEMA", value = "https" },
+    { name = "COM_ASREVO_CVHOME_SERVICES_SPG_PORT", value = "443" },
+    { name = "COM_ASREVO_CVHOME_SERVICES_STORE_NAMESPACE", value = local.default_pod.domain },
+  ]
+
+  pod_list_env = flatten([
+    for key, pod in var.pods : [
+      { name = "COM_ASREVO_CVHOME_PODS[${pod.index}]_ID", value = pod.id },
+      { name = "COM_ASREVO_CVHOME_PODS[${pod.index}]_NAME", value = pod.name },
+      { name = "COM_ASREVO_CVHOME_PODS[${pod.index}]_ENDPOINT_ENDPOINT", value = pod.endpoint },
+      { name = "COM_ASREVO_CVHOME_PODS[${pod.index}]_ENDPOINT_TYPE", value = "EXTERNAL" },
+    ]
+  ])
+
+  database_env = [
+    { name = "SPRING_DATASOURCE_DATABASE", value = aws_db_instance.this.db_name },
+    { name = "SPRING_DATASOURCE_HOST", value = aws_db_instance.this.address },
+    { name = "SPRING_DATASOURCE_PORT", value = tostring(aws_db_instance.this.port) },
+    { name = "SPRING_DATASOURCE_USERNAME", value = aws_db_instance.this.username },
+  ]
+
+  database_secret = [
+    { name = "SPRING_DATASOURCE_PASSWORD", valueFrom = "${aws_db_instance.this.master_user_secret[0].secret_arn}:password::" },
+  ]
+
+  node_env = [
+    { name = "OTEL_EXPORTER_OTLP_PROTOCOL", value = "grpc" },
+    { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "${local.otlp_endpoint}:4317" },
+  ]
+
+  # Named secrets this layer can bind, as "<name>:<json-key>" in the catalog.
+  secret_arns = {
+    stripe = data.aws_secretsmanager_secret.stripe.arn
+    uaa    = data.aws_secretsmanager_secret.uaa.arn
+  }
+
+  # ------------------------------------------------------------------ per-service wiring
+
+  services = {
+    for name, svc in var.services : name => merge(svc, {
+      image = "${var.docker_registry}/${svc.image}:${var.image_tag}"
+      size  = var.flavour.sizes[svc.size]
+
+      environment = concat(
+        svc.runtime == "spring" ? local.common_spring_env : [],
+        svc.runtime == "spring" ? local.edge_scheme_env : [],
+        svc.runtime == "spring" ? local.spg_env : [],
+        svc.runtime == "node" ? concat(local.node_env, [{ name = "OTEL_SERVICE_NAME", value = name }]) : [],
+        try(svc.database, false) ? local.database_env : [],
+        try(svc.needs_pod_list, false) ? local.pod_list_env : [],
+        [for k, v in try(svc.extra_env, {}) : { name = k, value = v }],
+      )
+
+      secrets = concat(
+        try(svc.database, false) ? local.database_secret : [],
+        [
+          for env_name, ref in try(svc.secrets, {}) : {
+            name      = env_name
+            valueFrom = "${local.secret_arns[split(":", ref)[0]]}:${split(":", ref)[1]}::"
+          }
+        ],
+      )
+
+      secret_arns = compact(concat(
+        try(svc.database, false) ? [aws_db_instance.this.master_user_secret[0].secret_arn] : [],
+        [for ref in values(try(svc.secrets, {})) : local.secret_arns[split(":", ref)[0]]],
+      ))
+    })
+  }
+}
+
+# ------------------------------------------------------------------------- discovery
+
+resource "aws_service_discovery_private_dns_namespace" "this" {
+  name        = local.namespace
+  description = "Service discovery for ${local.layer} in ${var.env}"
+  vpc         = var.vpc_id
+  tags        = var.tags
+}
+
+# --------------------------------------------------------------------------- cluster
+
+resource "aws_ecs_cluster" "this" {
+  name = "${local.prefix}-${local.layer}"
+
+  setting {
+    name  = "containerInsights"
+    value = var.flavour.monitoring ? "enabled" : "disabled"
+  }
+
+  tags = var.tags
+}
+
+resource "aws_ecs_cluster_capacity_providers" "this" {
+  cluster_name       = aws_ecs_cluster.this.name
+  capacity_providers = ["FARGATE", "FARGATE_SPOT"]
+}
+
+# -------------------------------------------------------------------------- secrets
+
+# Created by the bootstrap stack, which owns the values a human supplied.
+data "aws_secretsmanager_secret" "stripe" {
+  name = "/${var.project}/${var.env}/stripe"
+}
+
+data "aws_secretsmanager_secret" "uaa" {
+  name = "/${var.project}/${var.env}/uaa"
+}
+
+# -------------------------------------------------------------------------- services
+
+module "service" {
+  source   = "../ecs-service"
+  for_each = local.services
+
+  name    = each.key
+  project = var.project
+  env     = var.env
+  layer   = local.layer
+
+  cluster_name     = aws_ecs_cluster.this.name
+  namespace_id     = aws_service_discovery_private_dns_namespace.this.id
+  vpc_id           = var.vpc_id
+  vpc_cidr_block   = var.vpc_cidr_block
+  subnets          = var.task_subnet_ids
+  assign_public_ip = var.assign_public_ip
+
+  image       = each.value.image
+  ports       = [each.value.port]
+  environment = each.value.environment
+  secrets     = each.value.secrets
+
+  cpu                        = each.value.size.cpu
+  memory                     = each.value.size.memory
+  desired_count              = var.flavour.desired_count
+  autoscale                  = var.flavour.autoscale
+  capacity                   = var.flavour.capacity
+  health_check_grace_seconds = var.flavour.health_check_grace_seconds
+  log_retention_days         = var.flavour.log_retention_days
+
+  target_groups = try(each.value.edge.lb, "") == "alb" ? {
+    alb = {
+      arn  = aws_lb_target_group.service[each.key].arn
+      port = each.value.port
+    }
+  } : {}
+
+  load_balancer_security_group_id = try(each.value.edge.lb, "") == "alb" ? aws_security_group.alb.id : null
+
+  secret_arns = each.value.secret_arns
+
+  tags = merge(var.tags, { Service = each.key })
+}
+
+# One collector for the whole environment. The legacy stack ran one here and another in
+# every pod — N+1 for N pods. Pod tasks resolve this one across the namespace boundary,
+# because Cloud Map namespaces are private hosted zones in the same VPC.
+module "otel_collector" {
+  source = "../ecs-service"
+  count  = var.flavour.monitoring ? 1 : 0
+
+  name    = "otel-collector"
+  project = var.project
+  env     = var.env
+  layer   = local.layer
+
+  cluster_name     = aws_ecs_cluster.this.name
+  namespace_id     = aws_service_discovery_private_dns_namespace.this.id
+  vpc_id           = var.vpc_id
+  vpc_cidr_block   = var.vpc_cidr_block
+  subnets          = var.task_subnet_ids
+  assign_public_ip = var.assign_public_ip
+
+  image = var.otel_collector.image
+  ports = var.otel_collector.ports
+
+  environment = [
+    { name = "AWS_REGION", value = var.region },
+  ]
+
+  cpu                        = var.flavour.sizes[var.otel_collector.size].cpu
+  memory                     = var.flavour.sizes[var.otel_collector.size].memory
+  desired_count              = 1
+  autoscale                  = false
+  capacity                   = var.flavour.capacity
+  health_check_grace_seconds = var.flavour.health_check_grace_seconds
+  log_retention_days         = var.flavour.log_retention_days
+
+  tags = merge(var.tags, { Service = "otel-collector" })
+}
