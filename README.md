@@ -218,8 +218,30 @@ cfn-lint bootstrap/bootstrap.yaml
 ```
 
 CI runs all of these on every push and pull request
-(`.github/workflows/terraform-validate.yml`). The first five jobs need no AWS
-credentials, so they run on forks; only the plan job assumes a role, via OIDC.
+(`.github/workflows/terraform-validate.yml`). Only the plan job assumes an AWS role,
+via OIDC; the rest need no cloud credentials.
+
+The drift check compares against **the same branch name in the application repo when
+one exists**, and the application's default branch otherwise:
+
+| this repo | compared against |
+|---|---|
+| `main` | `cvhome@main` |
+| `develop` | `cvhome@develop` |
+| `feat/add-search` | `cvhome@feat/add-search` |
+| `feat/tighten-sg` (no counterpart) | `cvhome`'s default branch |
+
+A new service and the catalog entry describing it are one change split across two
+repositories, normally developed under the same branch name. Comparing a feature branch
+here against the application's default branch would report the new service as "in the
+catalog but not in common-config.yml" and fail every build until both sides merged.
+Most platform work touches no service and has no counterpart branch, which is what the
+fallback is for — and on `main` it asks the question that matters: does released
+infrastructure match released application code?
+
+Reading the application repo needs `APP_REPO_TOKEN`. Without it the job fails rather
+than skipping: a catalog change nothing verified is how four services ended up with no
+infrastructure.
 
 **Applies never happen from GitHub Actions.** They happen in CodeBuild. The previous
 setup applied from both, with two different project ids, against two different state

@@ -68,14 +68,59 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # The check compares services.yaml against the application repo. Without that
-      # checkout there is nothing to compare, so a missing app repo fails the job
-      # rather than passing vacuously.
+
+      # Which branch of the application to compare against.
+      #
+      # A new service and the catalog entry describing it are one change split across
+      # two repositories, and they are normally developed on branches of the same name.
+      # Comparing a feature branch here against the application's default branch would
+      # report the new service as "in the catalog but not in common-config.yml" and
+      # fail every build until both sides merged — so the same branch name wins when it
+      # exists.
+      #
+      # Most platform work touches no service at all and has no counterpart branch, so
+      # the fallback is the application's default branch. That is also what makes the
+      # check meaningful on main: it asks whether released infrastructure matches
+      # released application code.
+      - name: Resolve the application branch
+        id: app
+        env:
+          GH_TOKEN: ${{ secrets.APP_REPO_TOKEN }}
+          APP_REPO: ${{ vars.APP_REPO || 'cvhome-saas/cvhome' }}
+          # On a pull request, ref_name is the merge ref (123/merge), so the source
+          # branch has to come from head_ref instead.
+          CANDIDATE: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::APP_REPO_TOKEN is not available, so the catalog cannot be" \
+                 "compared against $APP_REPO. This check does not pass vacuously:" \
+                 "a catalog change that nothing verified is how four services ended" \
+                 "up with no infrastructure."
+            exit 1
+          fi
+
+          if gh api "repos/${APP_REPO}/branches/${CANDIDATE}" >/dev/null 2>&1; then
+            ref="$CANDIDATE"
+            why="matching branch"
+          else
+            ref="$(gh api "repos/${APP_REPO}" --jq .default_branch)"
+            why="no branch named '${CANDIDATE}' in ${APP_REPO}; using its default"
+          fi
+
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+          echo "repo=${APP_REPO}" >> "$GITHUB_OUTPUT"
+          echo "Comparing against ${APP_REPO}@${ref} (${why})"
+          echo "Catalog compared against \`${APP_REPO}@${ref}\` — ${why}." >> "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/checkout@v4
         with:
-          repository: cvhome-saas/cvhome
+          repository: ${{ steps.app.outputs.repo }}
+          ref: ${{ steps.app.outputs.ref }}
           path: .app
           token: ${{ secrets.APP_REPO_TOKEN }}
+
       - run: python3 scripts/check-catalog-drift.py --app-repo .app
 
   cloudformation:
