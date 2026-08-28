@@ -1,3 +1,8 @@
+output "hibernated" {
+  description = "True when compute is torn down. The database is stopped separately by scripts/hibernate.sh."
+  value       = var.hibernated
+}
+
 output "console_url" {
   description = "Sign in here. This is the QA path's first step."
   value       = module.store_core.console_url

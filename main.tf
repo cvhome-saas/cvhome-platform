@@ -115,6 +115,13 @@ resource "terraform_data" "guards" {
       condition     = length(var.project) + length(var.env) <= 34
       error_message = "project + env is ${length(var.project) + length(var.env)} characters. Names built from both must fit AWS limits — keep the total at 34 or below."
     }
+    # Load balancers under a protected flavour have deletion protection on, and
+    # Terraform cannot disable it and delete in one apply — the destroy simply fails.
+    # More to the point, an environment worth protecting is not one to hibernate.
+    precondition {
+      condition     = !(var.hibernated && local.flavour.protected)
+      error_message = "Flavour '${var.flavour}' is protected, so this environment cannot be hibernated. Hibernation is for dev, staging and ephemeral environments."
+    }
     precondition {
       condition     = local.prereq.app_domain == local.app_domain
       error_message = "The certificate in the prereq state covers '${local.prereq.app_domain}', but this environment serves '${local.app_domain}'. Re-apply prereq first."
@@ -132,8 +139,9 @@ module "network" {
   cidr_block = var.vpc_cidr_block
   az_count   = var.az_count
 
-  private_tasks = local.flavour.private_tasks
-  nat_gateway   = local.flavour.nat_gateway
+  private_tasks   = local.flavour.private_tasks
+  nat_gateway     = local.flavour.nat_gateway
+  compute_enabled = !var.hibernated
 
 }
 
@@ -226,7 +234,7 @@ module "store_core" {
   pods             = local.pod_summaries
   test_stores      = var.test_stores
   postgres_version = var.postgres_version
-
+  compute_enabled  = !var.hibernated
 }
 
 # ------------------------------------------------------------------------ store-pod
@@ -260,5 +268,5 @@ module "store_pod" {
 
   test_stores      = var.test_stores
   postgres_version = var.postgres_version
-
+  compute_enabled  = !var.hibernated
 }

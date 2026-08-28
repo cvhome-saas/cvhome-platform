@@ -32,6 +32,12 @@ variable "nat_gateway" {
   type        = bool
 }
 
+variable "compute_enabled" {
+  description = "When false, the NAT gateway goes. Subnets and the VPC itself are free and stay."
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   description = "Extra identity tags. Project/Environment/Flavour arrive via provider default_tags."
   type        = map(string)

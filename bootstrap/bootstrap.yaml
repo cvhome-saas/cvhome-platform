@@ -272,6 +272,19 @@ Resources:
                   StringEquals:
                     aws:RequestedRegion: [!Ref "AWS::Region", us-east-1]
 
+              # Terraform cannot stop or start a database — aws_db_instance exposes
+              # only a read-only status — so the hibernate and wake scripts call the
+              # API directly and these two actions are theirs.
+              - Sid: HibernationStateChange
+                Effect: Allow
+                Action: [rds:StopDBInstance, rds:StartDBInstance]
+                Resource: !Sub "arn:aws:rds:${AWS::Region}:${AWS::AccountId}:db:*"
+
+              - Sid: WriteHibernationFlag
+                Effect: Allow
+                Action: ssm:PutParameter
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectId}/*"
+
               - Sid: ReadConfigAndSecrets
                 Effect: Allow
                 Action:
@@ -585,6 +598,185 @@ Resources:
       SourceVersion: !Ref Branch
       TimeoutInMinutes: 60
 
+
+  # ==========================================================================
+  # Hibernation
+  #
+  # Destroys everything billed by the hour and keeps everything holding state.
+  # Two CodeBuild projects drive it, plus a keeper that works around a hard AWS
+  # limit: a stopped RDS instance is started again automatically after seven days.
+  # ==========================================================================
+
+  HibernatedFlag:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/${ProjectId}/${EnvName}/hibernated"
+      Type: String
+      Value: "false"
+      Description: Whether this environment is meant to be asleep. Read by the keeper.
+
+  HibernateProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${ProjectId}-${EnvName}-hibernate"
+      Description: Destroy compute, keep state, stop the databases
+      ServiceRole: !GetAtt DeployRole.Arn
+      Artifacts: { Type: NO_ARTIFACTS }
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - { Name: PROJECT_ID, Value: !Ref ProjectId }
+          - { Name: ENV_NAME, Value: !Ref EnvName }
+          - { Name: TF_STATE_BUCKET, Value: !Ref TerraformStateBucket }
+      Source:
+        Type: GITHUB
+        Location: !Sub "https://github.com/${GithubAccount}/${PlatformRepo}.git"
+        BuildSpec: |
+          version: 0.2
+          phases:
+            install:
+              commands:
+                - cd /usr/local/bin
+                - wget -q https://releases.hashicorp.com/terraform/1.14.6/terraform_1.14.6_linux_amd64.zip
+                - unzip -o -q terraform_1.14.6_linux_amd64.zip
+                - cd $CODEBUILD_SRC_DIR
+            build:
+              commands:
+                - scripts/hibernate.sh "$ENV_NAME"
+      SourceVersion: !Ref Branch
+      TimeoutInMinutes: 60
+
+  WakeProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${ProjectId}-${EnvName}-wake"
+      Description: Start the databases, then rebuild compute
+      ServiceRole: !GetAtt DeployRole.Arn
+      Artifacts: { Type: NO_ARTIFACTS }
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - { Name: PROJECT_ID, Value: !Ref ProjectId }
+          - { Name: ENV_NAME, Value: !Ref EnvName }
+          - { Name: TF_STATE_BUCKET, Value: !Ref TerraformStateBucket }
+      Source:
+        Type: GITHUB
+        Location: !Sub "https://github.com/${GithubAccount}/${PlatformRepo}.git"
+        BuildSpec: |
+          version: 0.2
+          phases:
+            install:
+              commands:
+                - cd /usr/local/bin
+                - wget -q https://releases.hashicorp.com/terraform/1.14.6/terraform_1.14.6_linux_amd64.zip
+                - unzip -o -q terraform_1.14.6_linux_amd64.zip
+                - cd $CODEBUILD_SRC_DIR
+            build:
+              commands:
+                - scripts/wake.sh "$ENV_NAME"
+      SourceVersion: !Ref Branch
+      # Starting a stopped instance is minutes, not seconds, and the script waits.
+      TimeoutInMinutes: 90
+
+  # --- the keeper --------------------------------------------------------------
+  #
+  # AWS restarts a stopped RDS instance after seven days. Without this, a hibernated
+  # environment silently resumes paying for database compute on day eight, which is
+  # exactly the cost hibernation existed to avoid. The keeper runs daily, and stops
+  # anything that is running while the flag says the environment should be asleep.
+
+  HibernationKeeperRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: keeper
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [rds:DescribeDBInstances, rds:ListTagsForResource]
+                Resource: "*"
+              - Effect: Allow
+                Action: rds:StopDBInstance
+                Resource: !Sub "arn:aws:rds:${AWS::Region}:${AWS::AccountId}:db:*"
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectId}/*"
+
+  HibernationKeeperFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 120
+      Role: !GetAtt HibernationKeeperRole.Arn
+      Environment:
+        Variables:
+          PROJECT_ID: !Ref ProjectId
+          ENV_NAME: !Ref EnvName
+      Code:
+        ZipFile: |
+          import os
+          import boto3
+
+          def handler(event, context):
+              project = os.environ["PROJECT_ID"]
+              env = os.environ["ENV_NAME"]
+
+              ssm = boto3.client("ssm")
+              try:
+                  flag = ssm.get_parameter(Name=f"/{project}/{env}/hibernated")["Parameter"]["Value"]
+              except ssm.exceptions.ParameterNotFound:
+                  return {"skipped": "no hibernation flag"}
+
+              if flag.strip().lower() != "true":
+                  return {"skipped": "environment is awake"}
+
+              rds = boto3.client("rds")
+              stopped = []
+              for page in rds.get_paginator("describe_db_instances").paginate():
+                  for db in page["DBInstances"]:
+                      tags = {t["Key"]: t["Value"] for t in db.get("TagList", [])}
+                      if tags.get("Project") != project or tags.get("Environment") != env:
+                          continue
+                      if db["DBInstanceStatus"] != "available":
+                          continue
+                      # Reached here because AWS restarted it at the seven day mark.
+                      rds.stop_db_instance(DBInstanceIdentifier=db["DBInstanceIdentifier"])
+                      stopped.append(db["DBInstanceIdentifier"])
+
+              return {"re_stopped": stopped}
+
+  HibernationKeeperSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: !Sub "Re-stop ${ProjectId}/${EnvName} databases that AWS auto-started"
+      ScheduleExpression: rate(1 day)
+      State: ENABLED
+      Targets:
+        - Id: keeper
+          Arn: !GetAtt HibernationKeeperFunction.Arn
+
+  HibernationKeeperPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt HibernationKeeperFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt HibernationKeeperSchedule.Arn
+
   # ==========================================================================
   # Start the pipeline. Nothing did this in the legacy template, which is why its
   # "one-click" deploy completed the stack and then provisioned nothing.
@@ -731,6 +923,14 @@ Outputs:
   ConfigParameterName:
     Description: Where the app's publish workflow reads the project id from
     Value: !Ref ConfigParameter
+
+  HibernateProject:
+    Description: Run this to put the environment to sleep
+    Value: !Ref HibernateProject
+
+  WakeProject:
+    Description: Run this to bring it back
+    Value: !Ref WakeProject
 
   PipelineConsole:
     Description: Watch the three stages here

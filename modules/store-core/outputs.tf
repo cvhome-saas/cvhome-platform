@@ -8,7 +8,8 @@ output "namespace_id" {
 }
 
 output "alb_dns_name" {
-  value = aws_lb.this.dns_name
+  description = "Null while hibernated — the load balancer is one of the hourly things that goes."
+  value       = one(aws_lb.this[*].dns_name)
 }
 
 output "console_url" {
@@ -17,7 +18,11 @@ output "console_url" {
 }
 
 output "urls" {
-  description = "Every hostname this layer answers on, derived from the catalog."
+  description = <<-EOT
+    Every hostname this layer answers on, derived from the catalog. Still reported while
+    hibernated: these are what the environment will answer on once woken, and they do
+    not change across a hibernate/wake cycle because the records are aliases.
+  EOT
   value       = { for host, service in local.records : host => service }
 }
 

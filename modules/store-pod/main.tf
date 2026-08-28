@@ -157,8 +157,10 @@ resource "aws_ecs_cluster_capacity_providers" "this" {
 # -------------------------------------------------------------------------- services
 
 module "service" {
-  source   = "../ecs-service"
-  for_each = local.services
+  source = "../ecs-service"
+  # Hibernating destroys every pod service. The cluster and namespace stay: both are
+  # free, and keeping the namespace keeps its id stable across a wake.
+  for_each = var.compute_enabled ? local.services : {}
 
   name    = each.key
   project = var.project

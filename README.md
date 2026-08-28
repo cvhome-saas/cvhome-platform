@@ -39,6 +39,52 @@ One click, then wait.
 
 To tear it down, run the `-destroy` CodeBuild project.
 
+## Hibernating an environment
+
+A dev environment that nobody is using still bills for Fargate tasks, load balancer
+hours and a database. Hibernating destroys everything charged by the hour and keeps
+everything holding state.
+
+```bash
+scripts/hibernate.sh dev     # or run the <project>-dev-hibernate CodeBuild project
+scripts/wake.sh dev          # or <project>-dev-wake
+```
+
+| Destroyed | Kept |
+|---|---|
+| ECS services and tasks | RDS instances — **stopped**, not deleted |
+| ALB, per-pod NLBs, target groups | S3 buckets: media, Caddy certificates, logs |
+| NAT gateway | CloudFront distributions |
+| Route53 records aliasing them | Secrets Manager, ECR images |
+| | VPC, subnets, Cloud Map namespaces, ECS clusters |
+
+Nothing the application can observe changes across the cycle. The RDS endpoint survives
+because the instance is stopped rather than replaced; the CloudFront domain survives, so
+media URLs already stored in the database still resolve; and hostnames survive because
+the DNS records are aliases. While asleep the hostnames do not resolve at all — the
+records point at load balancers that no longer exist, so they are removed with them.
+
+**Order matters, and the two directions are not symmetric.** Hibernate destroys compute
+*first*, then stops the databases, because a stop is rejected while connections are
+open. Wake starts the databases and *waits* for them before creating services, because a
+service that starts against a database still booting fails its health check and gets
+rolled back by the circuit breaker.
+
+**The seven-day limit.** AWS restarts a stopped RDS instance after seven days — there is
+no way to opt out. The bootstrap stack creates a keeper Lambda that runs daily, reads
+`/{project}/{env}/hibernated`, and re-stops anything AWS has woken. Without it a
+hibernated environment quietly starts paying for database compute again on day eight.
+
+Protected flavours refuse to hibernate. Load balancers under `prod` have deletion
+protection on, which Terraform cannot disable and delete in one apply — and an
+environment worth protecting is not one to put to sleep. The plan fails with that
+explanation rather than part-way through the apply.
+
+Hibernation does **not** stop storage costs: RDS storage and backups, S3, ECR and
+Secrets Manager all continue, as does one Route53 private hosted zone per Cloud Map
+namespace. It removes the compute and load balancer hours, which is the bulk of an idle
+environment's bill.
+
 ## The two files that matter
 
 ### `services.yaml` — the service catalog

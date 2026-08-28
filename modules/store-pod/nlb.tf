@@ -9,10 +9,12 @@
 
 locals {
   spg           = var.services["spg"]
-  nlb_listeners = { for port in local.spg.edge.listeners : tostring(port) => port }
+  nlb_listeners = var.compute_enabled ? { for port in local.spg.edge.listeners : tostring(port) => port } : {}
 }
 
 resource "aws_lb" "this" {
+  count = var.compute_enabled ? 1 : 0
+
   # name_prefix, not a truncated name: substr() silently produced colliding names once
   # project+env grew, and could end on a hyphen, which AWS rejects outright.
   # AWS appends uniqueness, so the prefix must leave room (<= 6 characters).
@@ -73,7 +75,7 @@ resource "aws_lb_target_group" "spg" {
 resource "aws_lb_listener" "tcp" {
   for_each = local.nlb_listeners
 
-  load_balancer_arn = aws_lb.this.arn
+  load_balancer_arn = aws_lb.this[0].arn
   port              = each.value
   protocol          = "TCP"
 
@@ -92,15 +94,15 @@ resource "aws_lb_listener" "tcp" {
 # created spg-<id>.example.com instead — matching what the tasks were told their
 # endpoint is only by accident in prod.
 resource "aws_route53_record" "pod" {
-  for_each = toset([local.pod_fqdn, "*.${local.pod_fqdn}"])
+  for_each = var.compute_enabled ? toset([local.pod_fqdn, "*.${local.pod_fqdn}"]) : toset([])
 
   zone_id = var.hosted_zone_id
   name    = each.value
   type    = "A"
 
   alias {
-    name                   = aws_lb.this.dns_name
-    zone_id                = aws_lb.this.zone_id
+    name                   = aws_lb.this[0].dns_name
+    zone_id                = aws_lb.this[0].zone_id
     evaluate_target_health = false
   }
 }

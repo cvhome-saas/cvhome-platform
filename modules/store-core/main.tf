@@ -175,8 +175,10 @@ data "aws_secretsmanager_secret" "uaa" {
 # -------------------------------------------------------------------------- services
 
 module "service" {
-  source   = "../ecs-service"
-  for_each = local.services
+  source = "../ecs-service"
+  # Hibernating destroys every service; the cluster and namespace stay because they
+  # cost nothing and keep the namespace id stable across a wake.
+  for_each = var.compute_enabled ? local.services : {}
 
   name    = each.key
   project = var.project
@@ -210,7 +212,7 @@ module "service" {
     }
   } : {}
 
-  load_balancer_security_group_id = try(each.value.edge.lb, "") == "alb" ? aws_security_group.alb.id : null
+  load_balancer_security_group_id = try(each.value.edge.lb, "") == "alb" ? aws_security_group.alb[0].id : null
 
   secret_arns = each.value.secret_arns
 
@@ -222,7 +224,7 @@ module "service" {
 # because Cloud Map namespaces are private hosted zones in the same VPC.
 module "otel_collector" {
   source = "../ecs-service"
-  count  = var.flavour.monitoring ? 1 : 0
+  count  = var.compute_enabled && var.flavour.monitoring ? 1 : 0
 
   name    = "otel-collector"
   project = var.project

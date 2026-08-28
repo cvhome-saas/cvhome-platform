@@ -14,7 +14,7 @@ locals {
 
   # One NAT, not one per AZ. A second costs the same again to protect against an AZ
   # failure that would already have degraded the service.
-  create_nat = var.private_tasks && var.nat_gateway
+  create_nat = var.private_tasks && var.nat_gateway && var.compute_enabled
 }
 
 resource "aws_vpc" "this" {

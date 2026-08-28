@@ -69,6 +69,30 @@ variable "image_tag" {
   default     = null
 }
 
+variable "hibernated" {
+  description = <<-EOT
+    Hibernate the environment: destroy everything billed by the hour and keep
+    everything holding state.
+
+      destroyed  ECS services and tasks, ALB, per-pod NLBs, NAT gateway, and the
+                 Route53 records that alias them
+      kept       RDS (stopped separately — Terraform cannot stop an instance),
+                 S3 buckets, CloudFront, Secrets Manager, ECR images, the VPC,
+                 Cloud Map namespaces and the ECS clusters, all of which are free
+                 or hold state
+
+    Waking is `hibernated = false` plus starting the database. Nothing an application
+    can observe changes across the cycle: the RDS endpoint, the CloudFront domain and
+    every hostname survive, because the DNS records are aliases and the database is
+    stopped rather than replaced.
+
+    Use scripts/hibernate.sh and scripts/wake.sh, which sequence this with the
+    database, rather than flipping it by hand.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "dns_prefix" {
   description = <<-EOT
     Label every hostname of this environment sits under, so several environments can

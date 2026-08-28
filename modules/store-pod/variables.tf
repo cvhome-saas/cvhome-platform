@@ -76,6 +76,17 @@ variable "test_stores" {
   default = false
 }
 
+variable "compute_enabled" {
+  description = <<-EOT
+    When false the pod is hibernated: services and the network load balancer go, while
+    the database, the media bucket, the CloudFront distribution and Caddy's certificate
+    store stay. Keeping CloudFront matters — its domain is baked into media URLs
+    already stored in the database, so recreating it would break them.
+  EOT
+  type        = bool
+  default     = true
+}
+
 variable "postgres_version" {
   type = string
 }

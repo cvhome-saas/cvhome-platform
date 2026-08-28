@@ -99,6 +99,20 @@ variable "test_stores" {
   default     = false
 }
 
+variable "compute_enabled" {
+  description = <<-EOT
+    When false the environment is hibernated: everything billed by the hour is
+    destroyed — ECS services, load balancers, NAT — while everything holding state is
+    kept: RDS, S3, CloudFront, Secrets Manager, the VPC and the Cloud Map namespace.
+
+    The kept resources are what make waking cheap and lossless. In particular the
+    RDS endpoint and the CloudFront domain survive, so stored media URLs and the
+    datasource host do not change under the application's feet.
+  EOT
+  type        = bool
+  default     = true
+}
+
 variable "postgres_version" {
   type = string
 }

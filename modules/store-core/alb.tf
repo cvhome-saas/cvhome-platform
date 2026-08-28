@@ -2,6 +2,12 @@ locals {
   # Services the catalog exposes at the edge, and the hosts each answers on.
   alb_services = { for name, svc in var.services : name => svc if try(svc.edge.lb, "") == "alb" }
 
+  # Everything the load balancer owns disappears while hibernated. The hostnames above
+  # are still computed, so `terraform output urls` keeps telling you what the
+  # environment answers on once it is awake.
+  active_alb_services = var.compute_enabled ? local.alb_services : {}
+  active_records      = var.compute_enabled ? local.records : {}
+
   # "@" means the apex. Everything else is a subdomain label.
   host_fqdn = {
     for name, svc in local.alb_services : name => [
@@ -24,6 +30,8 @@ locals {
 }
 
 resource "aws_security_group" "alb" {
+  count = var.compute_enabled ? 1 : 0
+
   name        = "${local.prefix}-${local.layer}-alb"
   description = "Public HTTP/HTTPS to the ${local.layer} load balancer"
   vpc_id      = var.vpc_id
@@ -31,9 +39,9 @@ resource "aws_security_group" "alb" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "alb" {
-  for_each = { http = 80, https = 443 }
+  for_each = var.compute_enabled ? { http = 80, https = 443 } : {}
 
-  security_group_id = aws_security_group.alb.id
+  security_group_id = aws_security_group.alb[0].id
   description       = "Public ${each.key}"
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "tcp"
@@ -43,7 +51,9 @@ resource "aws_vpc_security_group_ingress_rule" "alb" {
 }
 
 resource "aws_vpc_security_group_egress_rule" "alb" {
-  security_group_id = aws_security_group.alb.id
+  count = var.compute_enabled ? 1 : 0
+
+  security_group_id = aws_security_group.alb[0].id
   description       = "To targets in the VPC"
   cidr_ipv4         = var.vpc_cidr_block
   ip_protocol       = "-1"
@@ -51,13 +61,15 @@ resource "aws_vpc_security_group_egress_rule" "alb" {
 }
 
 resource "aws_lb" "this" {
+  count = var.compute_enabled ? 1 : 0
+
   # name_prefix (max 6) rather than a truncated name. substr() to 32 already overflowed
   # at project "cvhome" + env "staging", and could truncate onto a hyphen, which AWS
   # rejects. AWS appends the uniqueness suffix itself.
   name_prefix        = "core-"
   load_balancer_type = "application"
   subnets            = var.public_subnet_ids
-  security_groups    = [aws_security_group.alb.id]
+  security_groups    = [aws_security_group.alb[0].id]
 
   enable_deletion_protection = var.flavour.protected
   drop_invalid_header_fields = true
@@ -72,7 +84,7 @@ resource "aws_lb" "this" {
 }
 
 resource "aws_lb_target_group" "service" {
-  for_each = local.alb_services
+  for_each = local.active_alb_services
 
   # Also name_prefix: with a fixed name, create_before_destroy could never replace a
   # target group — the new one collided with the old one's name.
@@ -105,7 +117,9 @@ resource "aws_lb_target_group" "service" {
 }
 
 resource "aws_lb_listener" "http" {
-  load_balancer_arn = aws_lb.this.arn
+  count = var.compute_enabled ? 1 : 0
+
+  load_balancer_arn = aws_lb.this[0].arn
   port              = 80
   protocol          = "HTTP"
 
@@ -123,7 +137,9 @@ resource "aws_lb_listener" "http" {
 }
 
 resource "aws_lb_listener" "https" {
-  load_balancer_arn = aws_lb.this.arn
+  count = var.compute_enabled ? 1 : 0
+
+  load_balancer_arn = aws_lb.this[0].arn
   port              = 443
   protocol          = "HTTPS"
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
@@ -144,9 +160,9 @@ resource "aws_lb_listener" "https" {
 }
 
 resource "aws_lb_listener_rule" "host" {
-  for_each = local.alb_services
+  for_each = local.active_alb_services
 
-  listener_arn = aws_lb_listener.https.arn
+  listener_arn = aws_lb_listener.https[0].arn
   priority     = each.value.edge.priority
 
   action {
@@ -166,15 +182,15 @@ resource "aws_lb_listener_rule" "host" {
 # --------------------------------------------------------------------------- dns
 
 resource "aws_route53_record" "service" {
-  for_each = local.records
+  for_each = local.active_records
 
   zone_id = var.hosted_zone_id
   name    = each.key
   type    = "A"
 
   alias {
-    name                   = aws_lb.this.dns_name
-    zone_id                = aws_lb.this.zone_id
+    name                   = aws_lb.this[0].dns_name
+    zone_id                = aws_lb.this[0].zone_id
     evaluate_target_health = false
   }
 }
