@@ -525,6 +525,25 @@ Resources:
       Description: Build and push all 15 service images
       ServiceRole: !GetAtt BuildRole.Arn
       Artifacts: { Type: NO_ARTIFACTS }
+      # Measured on build e5942837: 826s total, of which bootBuildImage is 606s. Inside
+      # that, the buildpack builder image was pulled 12 times, the run image 12 times and
+      # the syft binary downloaded 12 times, because the lifecycle runs in a fresh
+      # container per service and nothing was retained between them.
+      #
+      # DOCKER_LAYER keeps the builder and run images on the host, so those pulls become
+      # local after the first. CUSTOM keeps the paths the buildspec names below, which is
+      # what makes --build-cache and the Gradle distribution download mean anything across
+      # builds: without it the -Dorg.gradle.caching=true above writes a cache that is
+      # thrown away with the container.
+      #
+      # LOCAL caching is opportunistic. It pays off when CodeBuild reuses a warm host and
+      # costs nothing when it does not, so a cold build is simply today's timing.
+      Cache:
+        Type: LOCAL
+        Modes:
+          - LOCAL_DOCKER_LAYER_CACHE
+          - LOCAL_CUSTOM_CACHE
+          - LOCAL_SOURCE_CACHE
       Environment:
         Type: LINUX_CONTAINER
         ComputeType: BUILD_GENERAL1_LARGE
@@ -545,6 +564,12 @@ Resources:
         Location: !Sub "https://github.com/${GithubAccount}/${AppRepo}.git"
         BuildSpec: |
           version: 0.2
+          # Read by LOCAL_CUSTOM_CACHE. caches/ is the resolved dependency and build cache;
+          # wrapper/ is the Gradle distribution itself, which was re-downloaded every build.
+          cache:
+            paths:
+              - "/root/.gradle/caches/**/*"
+              - "/root/.gradle/wrapper/**/*"
           phases:
             install:
               runtime-versions:
