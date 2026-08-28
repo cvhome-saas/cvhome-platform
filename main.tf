@@ -41,8 +41,14 @@ locals {
   # SSM holds what the bootstrap generated; tfvars holds what a human chose; tfvars
   # wins. Someone who never touches git still gets a working environment, and a team
   # that does gets reviewable diffs.
-  ssm    = jsondecode(data.aws_ssm_parameter.config.value)
-  prereq = jsondecode(data.aws_ssm_parameter.prereq.value)
+  # nonsensitive: the provider marks a data.aws_ssm_parameter value sensitive whatever
+  # the parameter type is, and sensitivity is contagious. pod_ids flows into local.pods,
+  # which is a for_each key, and a for_each key may not be sensitive because it would
+  # surface in resource addresses. Both of these are String parameters holding the
+  # non-secret configuration the bootstrap stack generated. Real secrets stay in Secrets
+  # Manager and reach tasks by ARN, so nothing unwrapped here was ever secret.
+  ssm    = jsondecode(nonsensitive(data.aws_ssm_parameter.config.value))
+  prereq = jsondecode(nonsensitive(data.aws_ssm_parameter.prereq.value))
 
   hosted_zone_id = coalesce(var.hosted_zone_id, local.ssm.hosted_zone_id)
 

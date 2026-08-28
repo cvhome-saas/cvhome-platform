@@ -316,6 +316,7 @@ Resources:
                   - ssm:GetParameter
                   - ssm:GetParameters
                   - secretsmanager:DescribeSecret
+                  - secretsmanager:GetResourcePolicy
                   - secretsmanager:GetSecretValue
                   - secretsmanager:ListSecretVersionIds
                 Resource:
