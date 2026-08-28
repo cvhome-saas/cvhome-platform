@@ -5,8 +5,8 @@ locals {
   # Everything the load balancer owns disappears while hibernated. The hostnames above
   # are still computed, so `terraform output urls` keeps telling you what the
   # environment answers on once it is awake.
-  active_alb_services = var.compute_enabled ? local.alb_services : {}
-  active_records      = var.compute_enabled ? local.records : {}
+  active_alb_services = { for name, svc in local.alb_services : name => svc if var.compute_enabled }
+  active_records      = { for host, svc in local.records : host => svc if var.compute_enabled }
 
   # "@" means the apex. Everything else is a subdomain label.
   host_fqdn = {
@@ -39,7 +39,7 @@ resource "aws_security_group" "alb" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "alb" {
-  for_each = var.compute_enabled ? { http = 80, https = 443 } : {}
+  for_each = { for k, v in { http = 80, https = 443 } : k => v if var.compute_enabled }
 
   security_group_id = aws_security_group.alb[0].id
   description       = "Public ${each.key}"

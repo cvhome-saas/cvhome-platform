@@ -304,7 +304,7 @@ resource "aws_appautoscaling_policy" "requests" {
 # Known daily shape, rather than a reaction to load. A schedule sets the floor and
 # ceiling; the target-tracking policies still move within them.
 resource "aws_appautoscaling_scheduled_action" "this" {
-  for_each = local.scaling > 0 ? { for sch in var.autoscaling.schedules : sch.name => sch } : {}
+  for_each = { for sch in var.autoscaling.schedules : sch.name => sch if local.scaling > 0 }
 
   name               = "${local.role_base}-${each.key}"
   resource_id        = aws_appautoscaling_target.this[0].resource_id

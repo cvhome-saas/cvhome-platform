@@ -205,7 +205,7 @@ module "service" {
   source = "../ecs-service"
   # Hibernating destroys every service; the cluster and namespace stay because they
   # cost nothing and keep the namespace id stable across a wake.
-  for_each = var.compute_enabled ? local.services : {}
+  for_each = { for name, svc in local.services : name => svc if var.compute_enabled }
 
   name    = each.key
   project = var.project

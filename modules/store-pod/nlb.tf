@@ -9,7 +9,7 @@
 
 locals {
   spg           = var.services["spg"]
-  nlb_listeners = var.compute_enabled ? { for port in local.spg.edge.listeners : tostring(port) => port } : {}
+  nlb_listeners = { for port in local.spg.edge.listeners : tostring(port) => port if var.compute_enabled }
 }
 
 resource "aws_lb" "this" {
@@ -94,7 +94,7 @@ resource "aws_lb_listener" "tcp" {
 # created spg-<id>.example.com instead — matching what the tasks were told their
 # endpoint is only by accident in prod.
 resource "aws_route53_record" "pod" {
-  for_each = var.compute_enabled ? toset([local.pod_fqdn, "*.${local.pod_fqdn}"]) : toset([])
+  for_each = toset(var.compute_enabled ? [local.pod_fqdn, "*.${local.pod_fqdn}"] : [])
 
   zone_id = var.hosted_zone_id
   name    = each.value
