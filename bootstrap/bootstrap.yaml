@@ -368,6 +368,15 @@ Resources:
                   Bool:
                     kms:GrantIsForAWSResource: "true"
 
+              # ListInstanceProfilesForRole is part of deleting a role, not of reading
+              # one: the provider looks for instance profiles to detach before it calls
+              # DeleteRole, and a denial there fails the delete. These are ECS task and
+              # execution roles, so the answer is always empty and no
+              # RemoveRoleFromInstanceProfile ever follows.
+              #
+              # Every other service here is granted as <service>:*, so their delete paths
+              # were covered by accident. IAM is the one narrowly scoped grant, which is
+              # why it is the one that broke on destroy and not on apply.
               - Sid: ScopedIam
                 Effect: Allow
                 Action:
@@ -381,6 +390,7 @@ Resources:
                   - iam:GetRolePolicy
                   - iam:ListRolePolicies
                   - iam:ListAttachedRolePolicies
+                  - iam:ListInstanceProfilesForRole
                   - iam:AttachRolePolicy
                   - iam:DetachRolePolicy
                 Resource:
