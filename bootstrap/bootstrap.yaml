@@ -566,10 +566,29 @@ Resources:
           version: 0.2
           # Read by LOCAL_CUSTOM_CACHE. caches/ is the resolved dependency and build cache;
           # wrapper/ is the Gradle distribution itself, which was re-downloaded every build.
+          #
+          # .npm is npm's own package cache, and three of the fifteen services need it. npm runs
+          # on this host rather than inside a container: console-ui and landing-ui build through
+          # com.asrevo.ui-conventions, whose `build` depends on npm_run_build, and their
+          # Dockerfiles only COPY the finished dist/ and .next/standalone; uaa builds
+          # src/main/resources/uaa-fe and copies the output into static/ before the buildpack
+          # runs. So LOCAL_DOCKER_LAYER_CACHE never sees any of it. Between them they resolve
+          # ~1.7 GB of node_modules -- landing-ui alone is an npm workspace of a Next storefront,
+          # six libs and twelve themes -- and without this every tarball is re-fetched from the
+          # registry on each build.
+          #
+          # Only caches outside the checkout are listed. Custom cache directories are linked
+          # before CodeBuild downloads the sources, so node_modules, .angular/cache and
+          # storefront/.next/cache, which all live under the source tree, cannot be cached here.
+          #
+          # The Node distribution needs no entry of its own. node-gradle 7.0.2 resolves it as an
+          # ordinary Gradle dependency (org.nodejs:node:23.8.0, 46 MB), so caches/ above already
+          # carries it and only the unpack into each project's .gradle/nodejs repeats.
           cache:
             paths:
               - "/root/.gradle/caches/**/*"
               - "/root/.gradle/wrapper/**/*"
+              - "/root/.npm/**/*"
           phases:
             install:
               runtime-versions:
