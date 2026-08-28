@@ -104,26 +104,34 @@ resource "aws_acm_certificate" "this" {
   }
 }
 
-# Keyed by record NAME, not by domain name. The apex and the wildcard emit the same
-# validation CNAME, so keying by domain_name created two Terraform resources managing
-# one DNS record — masked by allow_overwrite until it surfaced as an apply conflict.
-resource "aws_route53_record" "validation" {
-  for_each = {
+# The certificate carries the apex and its wildcard, and ACM emits one validation
+# CNAME covering both, so there is exactly one record to create.
+#
+# This deliberately uses no for_each. Keying by domain_name is known at plan time but
+# yields two Terraform resources managing that single DNS record. Keying by
+# resource_record_name deduplicates correctly but cannot plan: for_each keys must be
+# known before apply, and no validation record name exists until the certificate does.
+# Selecting the option into a local avoids both, because a resource attribute is
+# allowed to be unknown at plan time where a for_each key is not.
+locals {
+  validation_option = one([
     for opt in aws_acm_certificate.this.domain_validation_options :
-    opt.resource_record_name => opt...
-  }
+    opt if opt.domain_name == local.app_domain
+  ])
+}
 
+resource "aws_route53_record" "validation" {
   zone_id         = local.hosted_zone_id
-  name            = each.key
-  type            = each.value[0].resource_record_type
-  records         = distinct([for o in each.value : o.resource_record_value])
+  name            = local.validation_option.resource_record_name
+  type            = local.validation_option.resource_record_type
+  records         = [local.validation_option.resource_record_value]
   ttl             = 60
   allow_overwrite = true
 }
 
 resource "aws_acm_certificate_validation" "this" {
   certificate_arn         = aws_acm_certificate.this.arn
-  validation_record_fqdns = [for r in aws_route53_record.validation : r.fqdn]
+  validation_record_fqdns = [aws_route53_record.validation.fqdn]
 }
 
 # The env root reads the ARN from here rather than looking a certificate up by domain.
