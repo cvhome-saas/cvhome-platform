@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  CVHome platform bootstrap. Creates only what Terraform cannot create for itself —
+  CVHome platform bootstrap. Creates only what Terraform cannot create for itself:
   the state bucket, a scoped deploy role, the environment's config record, and the
-  CodeBuild projects — and then starts the pipeline. Everything else is Terraform.
+  CodeBuild projects. It then starts the pipeline. Everything else is Terraform.
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -64,7 +64,7 @@ Parameters:
     MaxValue: 20
     Description: >-
       Store pods IN ADDITION to the default one. Each pod is roughly a second small
-      environment in cost terms — its own RDS instance, network load balancer,
+      environment in cost terms: its own RDS instance, network load balancer,
       CloudFront distribution and nine ECS services.
 
   StripeKey:
