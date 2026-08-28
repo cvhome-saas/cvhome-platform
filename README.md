@@ -18,13 +18,6 @@ console's `templateURL` only accepts an S3 URL. `.github/workflows/publish-boots
 uploads `bootstrap/bootstrap.yaml` there on every push to `main`, and refuses to publish
 a template that does not pass `cfn-lint`.
 
-**One-time setup per AWS account.** Publishing, and the plan-on-PR job, assume AWS roles
-over OIDC so that no credentials are stored in GitHub. Nothing creates that trust for
-you, so deploy `bootstrap/github-oidc.yaml` once and copy its two outputs into the
-repository secrets `AWS_TEMPLATE_PUBLISH_ROLE_ARN` and `AWS_PLAN_ROLE_ARN`. Until then
-the publish workflow fails with those instructions rather than an opaque credentials
-error, and the launch button keeps pointing at whatever was published last.
-
 One click, then wait.
 
 1. The stack asks for a project id, an environment name, a flavour, a hosted zone, a

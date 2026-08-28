@@ -2,11 +2,7 @@
 #
 # These encode the security decisions from the architecture proposal as enforceable
 # rules, so a future edit cannot quietly reintroduce what the legacy template did.
-# Run locally:  cfn-guard validate -d bootstrap/ -r bootstrap/guard-rules
-#
-# The generic rules apply to every template here. The three that name a specific
-# resource or parameter are guarded with `when ... exists`, so adding a template does
-# not fail on rules that were never about it.
+# Run locally:  cfn-guard validate -d bootstrap/bootstrap.yaml -r bootstrap/guard-rules
 
 # Filter in the query, not with an inner `when`: a `when ... exists` guard over a
 # mixed set makes the whole rule SKIP, which reads as green while checking nothing.
@@ -85,7 +81,7 @@ rule s3_encrypted when %s3_buckets !empty {
 # State corruption should be recoverable, and the bucket must survive a stack delete —
 # deleting the state is how an environment becomes unmanageable rather than destroyed.
 #
-rule state_bucket_versioned when Resources.TerraformStateBucket exists {
+rule state_bucket_versioned {
     Resources.TerraformStateBucket.Properties.VersioningConfiguration.Status == "Enabled"
     <<
         violation: the Terraform state bucket is not versioned.
@@ -93,7 +89,7 @@ rule state_bucket_versioned when Resources.TerraformStateBucket exists {
     >>
 }
 
-rule state_bucket_retained when Resources.TerraformStateBucket exists {
+rule state_bucket_retained {
     Resources.TerraformStateBucket.DeletionPolicy == "Retain"
     Resources.TerraformStateBucket.UpdateReplacePolicy == "Retain"
     <<
@@ -106,7 +102,7 @@ rule state_bucket_retained when Resources.TerraformStateBucket exists {
 # The Stripe key is a live credential; it must never echo into console output,
 # events or the stack's parameter listing.
 #
-rule secret_parameters_are_noecho when Parameters.StripeKey exists {
+rule secret_parameters_are_noecho {
     Parameters.StripeKey.NoEcho == true
     <<
         violation: StripeKey is not marked NoEcho.

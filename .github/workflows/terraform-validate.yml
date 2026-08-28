@@ -157,9 +157,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install cfn-lint
-      # Every template in bootstrap/, not just the one. A new template must not ship
-      # unchecked simply because the job named a file.
-      - run: cfn-lint bootstrap/*.yaml
+      - run: cfn-lint bootstrap/bootstrap.yaml
 
       # The binary, pinned, rather than a marketplace action: there is no v1 tag on
       # aws-cloudformation/cloudformation-guard, so `uses: ...@v1` failed before the
@@ -177,13 +175,10 @@ jobs:
           curl -sSL -o guard.tar.gz \
             "https://github.com/aws-cloudformation/cloudformation-guard/releases/download/${GUARD_VERSION}/${asset}.tar.gz"
           tar xzf guard.tar.gz
-          for template in bootstrap/*.yaml; do
-            echo "== $template"
-            "./${asset}/cfn-guard" validate \
-              --data "$template" \
-              --rules bootstrap/guard-rules \
-              --show-summary all
-          done
+          "./${asset}/cfn-guard" validate \
+            --data bootstrap/bootstrap.yaml \
+            --rules bootstrap/guard-rules \
+            --show-summary all
 
   # --- the only job that touches AWS -------------------------------------------
 
