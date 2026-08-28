@@ -66,6 +66,29 @@ locals {
     { name = "COM_ASREVO_CVHOME_CDN_BASE-PATH", value = "https://${aws_cloudfront_distribution.cdn.domain_name}" },
   ]
 
+  # The Next.js storefront ships its own build output — `.next/static` and `public` — which
+  # start.mjs pushes to the pod's CDN bucket on first boot of a build and then serves from
+  # CloudFront instead of out of the task. It shares the media bucket under its own key prefix
+  # rather than getting a second bucket and a second distribution per pod.
+  #
+  # BASE_URL addresses the prefix, not the bucket root: sync-s3.mjs writes
+  # `<prefix>/_next/static/**` and rewrites the build's baked-in asset URLs to `<base>/_next/…`.
+  # The two remaining STATIC_ASSETS_* keys, S3_ENDPOINT and S3_FORCE_PATH_STYLE, are for pointing
+  # a local build at MinIO (qa-cdn-minio.sh) and must stay unset here — they would send the SDK
+  # somewhere other than S3. Credentials come from the task role.
+  #
+  # None of this is load-bearing: start.mjs falls back to serving assets from the origin on any
+  # sync failure, so a misconfigured CDN costs the storefront latency rather than availability.
+  static_assets_prefix = "storefront"
+
+  static_assets_env = [
+    { name = "STATIC_ASSETS_SYNC_ENABLED", value = "true" },
+    { name = "STATIC_ASSETS_S3_BUCKET", value = aws_s3_bucket.cdn.id },
+    { name = "STATIC_ASSETS_S3_PREFIX", value = local.static_assets_prefix },
+    { name = "STATIC_ASSETS_BASE_URL", value = "https://${aws_cloudfront_distribution.cdn.domain_name}/${local.static_assets_prefix}" },
+    { name = "AWS_REGION", value = aws_s3_bucket.cdn.region },
+  ]
+
   database_env = [
     { name = "SPRING_DATASOURCE_DATABASE", value = aws_db_instance.this.db_name },
     { name = "SPRING_DATASOURCE_HOST", value = aws_db_instance.this.address },
@@ -94,6 +117,11 @@ locals {
   template_vars = {
     namespace = local.namespace
     ports     = { for n, sv in var.services : n => sv.port }
+    # Flavour flags a service's own env needs. Strings, because an environment variable
+    # is one and the applications compare against "true" rather than to a parsed bool.
+    flavour = {
+      storefront_previews = tostring(var.flavour.storefront_previews)
+    }
   }
 
   # Scaling policy per service: the flavour sets the environment's shape, the catalog
@@ -133,6 +161,7 @@ locals {
         svc.runtime == "node" ? concat(local.node_env, [{ name = "OTEL_SERVICE_NAME", value = name }]) : [],
         svc.runtime == "caddy" ? local.caddy_env : [],
         try(svc.cdn, false) ? local.cdn_env : [],
+        try(svc.static_assets, false) ? local.static_assets_env : [],
         try(svc.database, false) ? local.database_env : [],
         # extra_env is rendered, not string-replaced: ${namespace} and ${ports.<svc>}
         # come from the catalog itself, so spg's merchant URL cannot drift from
@@ -146,7 +175,7 @@ locals {
 
       # Only the services that actually touch a bucket get bucket permissions.
       s3_bucket_arns = compact([
-        try(svc.cdn, false) ? aws_s3_bucket.cdn.arn : "",
+        try(svc.cdn, false) || try(svc.static_assets, false) ? aws_s3_bucket.cdn.arn : "",
         svc.runtime == "caddy" ? aws_s3_bucket.certs.arn : "",
       ])
     })

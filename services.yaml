@@ -23,6 +23,10 @@
 #                `priority` is explicit and stable: derived priorities renumber every
 #                rule whenever a service is added. Lower numbers match first, so put
 #                specific hosts below the gateway's catch-all.
+#   static_assets  node UIs only. Pushes the build's own static output to the pod's CDN
+#                bucket at container start and serves it from CloudFront: the
+#                STATIC_ASSETS_* env plus write access to the bucket. Distinct from
+#                `cdn`, which is tenant media and speaks to the Spring services.
 #   secrets      env injected from Secrets Manager, as "<secret>:<json-key>".
 #   needs_pod_list  receives COM_ASREVO_CVHOME_PODS[n]_* for every pod in the environment.
 #   autoscaling  overrides merged over the flavour's autoscaling block, key by key.
@@ -38,8 +42,9 @@
 #                metric off for this service even when the flavour sets it.
 #   extra_env    the genuinely per-service keys. Everything shared is computed once
 #                in the module, never repeated here. Values are rendered with
-#                templatestring: ${namespace} and ${ports.<service>} are available, so
-#                a port is never written twice.
+#                templatestring: ${namespace}, ${ports.<service>} and
+#                ${flavour.<flag>} are available, so a port is never written twice and
+#                a service can follow the environment's shape without a second catalog.
 
 core:
   store-core-gateway:
@@ -149,6 +154,9 @@ pod:
     database: false
     runtime: node
     size: ui
+    # Its own build output to the pod's CDN, not tenant media: the STATIC_ASSETS_* keys
+    # rather than the COM_ASREVO_CVHOME_CDN_* ones `cdn: true` hands the Spring services.
+    static_assets: true
     # Server-side rendering is CPU-bound and has no JVM heap to pressure, so memory
     # tracking only adds a policy that never fires. The floor stays the flavour's:
     # dropping prod to a single task would trade real availability for one task-hour.
@@ -156,6 +164,10 @@ pod:
       memory_target: null
     extra_env:
       INTERNAL_SPG: "http://spg.${namespace}:${ports.spg}"
+      # `?theme=<id>` / `?color=<PRESET>`, which the storefront otherwise compiles out
+      # because the image runs with NODE_ENV=production. On wherever the flavour says
+      # previews are welcome; off in prod, where the storefront belongs to a tenant.
+      STOREFRONT_THEME_OVERRIDE: "${flavour.storefront_previews}"
 
   merchant:
     port: 8120

@@ -27,6 +27,10 @@ dev:
   # and whether buckets may be force-destroyed — decisions that previously
   # rode on rds.deletion_protection, which is about something else.
   protected: false
+  # May a visitor re-theme the storefront for themselves with `?theme=<id>` / `?color=<PRESET>`?
+  # A production build compiles those previews out unless STOREFRONT_THEME_OVERRIDE says
+  # otherwise. Cookie-scoped to the browser that asks: a review tool, not a tenant's shop.
+  storefront_previews: true
   cdn_price_class: PriceClass_100
   capacity:
     # Pure Spot is fine where an interruption is an inconvenience, not an outage.
@@ -84,6 +88,10 @@ staging:
   # and whether buckets may be force-destroyed — decisions that previously
   # rode on rds.deletion_protection, which is about something else.
   protected: false
+  # May a visitor re-theme the storefront for themselves with `?theme=<id>` / `?color=<PRESET>`?
+  # A production build compiles those previews out unless STOREFRONT_THEME_OVERRIDE says
+  # otherwise. Cookie-scoped to the browser that asks: a review tool, not a tenant's shop.
+  storefront_previews: true
   cdn_price_class: PriceClass_100
   capacity:
     on_demand_base: 1
@@ -130,6 +138,10 @@ prod:
   # and whether buckets may be force-destroyed — decisions that previously
   # rode on rds.deletion_protection, which is about something else.
   protected: true
+  # May a visitor re-theme the storefront for themselves with `?theme=<id>` / `?color=<PRESET>`?
+  # A production build compiles those previews out unless STOREFRONT_THEME_OVERRIDE says
+  # otherwise. Cookie-scoped to the browser that asks: a review tool, not a tenant's shop.
+  storefront_previews: false
   cdn_price_class: PriceClass_All
   capacity:
     # An on-demand base means a Spot reclamation degrades capacity instead of
@@ -168,6 +180,10 @@ ephemeral:
   # and whether buckets may be force-destroyed — decisions that previously
   # rode on rds.deletion_protection, which is about something else.
   protected: false
+  # May a visitor re-theme the storefront for themselves with `?theme=<id>` / `?color=<PRESET>`?
+  # A production build compiles those previews out unless STOREFRONT_THEME_OVERRIDE says
+  # otherwise. Cookie-scoped to the browser that asks: a review tool, not a tenant's shop.
+  storefront_previews: true
   cdn_price_class: PriceClass_100
   capacity:
     on_demand_base: 0
