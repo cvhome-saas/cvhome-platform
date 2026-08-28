@@ -338,6 +338,36 @@ Resources:
 
               # The legacy role held iam:* outright. This can only touch roles it
               # created for this project's own tasks.
+              # manage_master_user_password makes RDS create the master password secret,
+              # encrypted with the AWS managed aws/secretsmanager key, and the calling
+              # principal is checked against that key. CloudTrail for the failed
+              # CreateDBInstance shows DescribeKey on alias/aws/rds succeeding through
+              # that key's own policy, then DescribeKey on the aws/secretsmanager key
+              # denied, and the create returning KMSKeyNotAccessibleFault [null].
+              #
+              # The AWS managed key ids are generated per account and per region, so
+              # they cannot be named in this template. DescribeKey returns metadata
+              # only. CreateGrant is confined to grants AWS services make for
+              # themselves, which is what RDS and Secrets Manager need here, and is not
+              # enough to hand a key to anything else.
+              - Sid: ManagedEncryptionKeys
+                Effect: Allow
+                Action: kms:DescribeKey
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: !Ref "AWS::Region"
+
+              - Sid: ManagedEncryptionGrants
+                Effect: Allow
+                Action: kms:CreateGrant
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: !Ref "AWS::Region"
+                  Bool:
+                    kms:GrantIsForAWSResource: "true"
+
               - Sid: ScopedIam
                 Effect: Allow
                 Action:

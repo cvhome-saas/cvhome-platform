@@ -37,8 +37,10 @@ locals {
 
 resource "aws_security_group" "this" {
   # Security group names allow 255 characters, so no truncation is needed here.
-  name        = "${local.prefix}-${local.qualified_name}"
-  description = "Ingress on ${var.name}'s own ports only"
+  name = "${local.prefix}-${local.qualified_name}"
+  # No apostrophe: EC2 restricts a security group description to
+  # a-zA-Z0-9. _-:/()#,@[]+=&;{}!$* and rejects the whole CreateSecurityGroup call.
+  description = "Ingress on the ${var.name} ports only"
   vpc_id      = var.vpc_id
 
   tags = merge(var.tags, { Name = "${local.prefix}-${local.qualified_name}" })

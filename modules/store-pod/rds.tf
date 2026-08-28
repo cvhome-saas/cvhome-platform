@@ -1,8 +1,9 @@
 # Per-pod RDS: isolation over cost (ADR-7). This is the term that scales with pod count.
 
 resource "aws_security_group" "db" {
-  name        = "${local.prefix}-${local.layer}-db"
-  description = "Postgres for pod ${var.pod.name}, reachable only from this pod's tasks"
+  name = "${local.prefix}-${local.layer}-db"
+  # No apostrophe: EC2 rejects it in a security group description.
+  description = "Postgres for pod ${var.pod.name}, reachable only from tasks in this pod"
   vpc_id      = var.vpc_id
   tags        = merge(var.tags, { Name = "${local.prefix}-${local.layer}-db" })
 }
