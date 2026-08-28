@@ -63,10 +63,6 @@ variable "database_subnet_group_name" {
   type = string
 }
 
-variable "log_bucket_id" {
-  type = string
-}
-
 variable "docker_registry" {
   type = string
 }
@@ -80,6 +76,12 @@ variable "test_stores" {
   default = false
 }
 
+variable "postgres_version" {
+  type = string
+}
+
 variable "tags" {
-  type = map(string)
+  description = "Extra identity tags. Project/Environment/Flavour arrive via provider default_tags."
+  type        = map(string)
+  default     = {}
 }

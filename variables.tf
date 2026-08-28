@@ -8,8 +8,8 @@ variable "project" {
   type        = string
 
   validation {
-    condition     = can(regex("^[a-z0-9][a-z0-9-]{1,20}$", var.project))
-    error_message = "project must be lowercase alphanumeric with hyphens, 2-21 characters — it prefixes resource names with hard length limits."
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{1,17}$", var.project))
+    error_message = "project must be lowercase alphanumeric with hyphens, 2-18 characters. It prefixes IAM role names, which cap at 64; 18 leaves room for the longest service and role suffix."
   }
 }
 
@@ -18,8 +18,8 @@ variable "env" {
   type        = string
 
   validation {
-    condition     = can(regex("^[a-z0-9][a-z0-9-]{0,12}$", var.env))
-    error_message = "env must be lowercase alphanumeric with hyphens, up to 13 characters."
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{0,9}$", var.env))
+    error_message = "env must be lowercase alphanumeric with hyphens, up to 10 characters. Combined with project it feeds names with a 64-character ceiling; main.tf asserts the total."
   }
 }
 
@@ -67,6 +67,27 @@ variable "image_tag" {
   description = "Container image tag to deploy. Read from SSM when not set here."
   type        = string
   default     = null
+}
+
+variable "dns_prefix" {
+  description = <<-EOT
+    Label every hostname of this environment sits under, so several environments can
+    share one hosted zone. Defaults to the environment name, and to "" for prod, which
+    owns the bare apex. The prereq root derives this identically and mints a matching
+    certificate, so overriding it here means overriding it there too.
+  EOT
+  type        = string
+  default     = null
+}
+
+variable "postgres_version" {
+  description = <<-EOT
+    RDS PostgreSQL engine version. Inherited from the legacy stack and not yet checked
+    against what RDS actually offers in the target region — verify with
+    `aws rds describe-db-engine-versions --engine postgres` before a first apply.
+  EOT
+  type        = string
+  default     = "18.4"
 }
 
 variable "test_stores" {

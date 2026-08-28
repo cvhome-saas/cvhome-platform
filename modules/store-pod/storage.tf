@@ -9,7 +9,7 @@ resource "aws_s3_bucket" "cdn" {
   bucket_prefix = substr("${local.prefix}-${var.pod.short}-cdn-", 0, 37)
 
   # Media is reproducible from the source of record; a pod teardown should not wedge.
-  force_destroy = var.flavour.rds.deletion_protection ? false : true
+  force_destroy = !var.flavour.protected
 
   tags = merge(var.tags, { Name = "${local.layer}-cdn" })
 }
@@ -36,8 +36,9 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "cdn" {
 resource "aws_s3_bucket" "certs" {
   bucket_prefix = substr("${local.prefix}-${var.pod.short}-certs-", 0, 37)
 
-  # Never force-destroy under a flavour that protects data: these are real certificates.
-  force_destroy = var.flavour.rds.deletion_protection ? false : true
+  # Never force-destroy under a protected flavour: these are real certificates, and
+  # losing them means re-issuing one per custom tenant domain.
+  force_destroy = !var.flavour.protected
 
   tags = merge(var.tags, { Name = "${local.layer}-certs" })
 }
@@ -87,9 +88,9 @@ resource "aws_cloudfront_distribution" "cdn" {
   comment         = "${local.prefix} ${var.pod.name} media"
   http_version    = "http2and3"
 
-  # PriceClass_All puts edges everywhere and costs the most. Below prod, the cheapest
-  # class is fine — the audience is a handful of developers.
-  price_class = var.flavour.monitoring ? "PriceClass_All" : "PriceClass_100"
+  # From the flavour directly. This used to key off flavour.monitoring, so enabling
+  # monitoring in staging silently tripled the CDN's edge footprint.
+  price_class = var.flavour.cdn_price_class
 
   origin {
     origin_id                = "cdn"

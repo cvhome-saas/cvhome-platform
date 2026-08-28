@@ -20,10 +20,15 @@
 #   size         key into the flavour's size table. Right-sizing lives here.
 #   edge         omitted  -> internal only, reachable through the layer's gateway.
 #                alb/nlb  -> gets a target group, and (for alb) host rules + Route53 records.
+#                `priority` is explicit and stable: derived priorities renumber every
+#                rule whenever a service is added. Lower numbers match first, so put
+#                specific hosts below the gateway's catch-all.
 #   secrets      env injected from Secrets Manager, as "<secret>:<json-key>".
 #   needs_pod_list  receives COM_ASREVO_CVHOME_PODS[n]_* for every pod in the environment.
 #   extra_env    the genuinely per-service keys. Everything shared is computed once
-#                in the module, never repeated here.
+#                in the module, never repeated here. Values are rendered with
+#                templatestring: ${namespace} and ${ports.<service>} are available, so
+#                a port is never written twice.
 
 core:
   store-core-gateway:
@@ -35,6 +40,7 @@ core:
     needs_pod_list: true
     edge:
       lb: alb
+      priority: 100
       # The gateway owns the apex, www, and the console host. `console-ui` is NOT
       # exposed directly — GatewayRouteLocatorImpl routes that host to lb://console-ui.
       # The legacy ALB published `seller-ui` here, a host the gateway never matched.
@@ -50,6 +56,7 @@ core:
       COM_ASREVO_CVHOME_ADMIN_PASSWORD: "uaa:COM_ASREVO_CVHOME_ADMIN_PASSWORD"
     edge:
       lb: alb
+      priority: 10
       hosts: ["uaa"]
 
   console-ui:
@@ -104,8 +111,8 @@ pod:
         port: 2019
         path: /config/
     extra_env:
-      ASK_TLS_URL: "http://merchant.${namespace}:8120/api/v1/router/public/ask-for-tls"
-      DOMAIN_LOOKUP_URL: "http://merchant.${namespace}:8120/api/v1/router/public/lookup-by-domain"
+      ASK_TLS_URL: "http://merchant.${namespace}:${ports.merchant}/api/v1/router/public/ask-for-tls"
+      DOMAIN_LOOKUP_URL: "http://merchant.${namespace}:${ports.merchant}/api/v1/router/public/lookup-by-domain"
       ACME_CA_URL: "https://acme-v02.api.letsencrypt.org/directory"
 
   landing-ui:
@@ -115,7 +122,7 @@ pod:
     runtime: node
     size: ui
     extra_env:
-      INTERNAL_SPG: "http://spg.${namespace}:80"
+      INTERNAL_SPG: "http://spg.${namespace}:${ports.spg}"
 
   merchant:
     port: 8120

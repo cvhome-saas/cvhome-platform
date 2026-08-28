@@ -7,12 +7,20 @@ locals {
   qualified_name = "${var.layer}-${var.name}"
   prefix         = "${var.project}-${var.env}"
 
+  # IAM role names cap at 64. The layer is redundant for core services (store-core-gateway
+  # already says it) and for pod services the pod id is what disambiguates, so roles are
+  # named from the pod id rather than the full layer. A precondition below refuses to
+  # create a name that would be rejected, rather than letting the apply fail mid-flight.
+  role_scope = var.layer == "store-core" ? "" : "${replace(var.layer, "store-pod-", "")}-"
+  role_base  = "${local.prefix}-${local.role_scope}${var.name}"
+
   log_group = "/aws/ecs/${var.project}/${var.env}/${var.layer}/${var.name}"
 }
 
 # --------------------------------------------------------------------- security group
 
 resource "aws_security_group" "this" {
+  # Security group names allow 255 characters, so no truncation is needed here.
   name        = "${local.prefix}-${local.qualified_name}"
   description = "Ingress on ${var.name}'s own ports only"
   vpc_id      = var.vpc_id
@@ -189,10 +197,11 @@ resource "aws_ecs_service" "this" {
 
   tags = var.tags
 
-  lifecycle {
-    # Autoscaling owns desired_count once it is attached.
-    ignore_changes = [desired_count]
-  }
+  # No ignore_changes on desired_count. It was unconditional before, which meant a
+  # change to the flavour's desired_count never took effect after first apply — prod
+  # could not be raised from 2. Terraform now owns the baseline and the autoscaler
+  # expands above it; an apply resets to baseline and the autoscaler re-expands within
+  # a couple of minutes, which is the correct behaviour for a deploy.
 
   depends_on = [aws_iam_role_policy.execution]
 }

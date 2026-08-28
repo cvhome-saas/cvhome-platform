@@ -13,19 +13,21 @@ locals {
 }
 
 resource "aws_lb" "this" {
-  name               = substr("${local.prefix}-${var.pod.short}", 0, 32)
+  # name_prefix, not a truncated name: substr() silently produced colliding names once
+  # project+env grew, and could end on a hyphen, which AWS rejects outright.
+  # AWS appends uniqueness, so the prefix must leave room (<= 6 characters).
+  name_prefix        = "p${substr(var.pod.short, 0, 5)}"
   load_balancer_type = "network"
   subnets            = var.public_subnet_ids
   internal           = false
 
-  enable_deletion_protection       = var.flavour.rds.deletion_protection
+  enable_deletion_protection       = var.flavour.protected
   enable_cross_zone_load_balancing = true
 
-  access_logs {
-    enabled = true
-    bucket  = var.log_bucket_id
-    prefix  = "${local.layer}-nlb"
-  }
+  # No access_logs block. Network load balancers only write access logs for TLS
+  # listeners, and these are deliberate TCP passthrough so Caddy can terminate TLS
+  # itself. Enabling it produced nothing while still requiring a bucket policy that,
+  # if wrong, fails load balancer creation. Request logging for a pod is Caddy's job.
 
   tags = var.tags
 }
@@ -33,13 +35,19 @@ resource "aws_lb" "this" {
 resource "aws_lb_target_group" "spg" {
   for_each = local.nlb_listeners
 
-  name        = substr("${local.prefix}-${var.pod.short}-${each.key}", 0, 32)
+  name_prefix = "t${substr(each.key, 0, 4)}"
   port        = each.value
   protocol    = "TCP"
   target_type = "ip"
   vpc_id      = var.vpc_id
 
   deregistration_delay = 30
+
+  # Stated rather than inherited. With client IP preservation off, targets see the
+  # load balancer's private address, which is why spg's security group can admit the
+  # VPC CIDR alone. Turning this on would require opening 80/443 to 0.0.0.0/0 on spg —
+  # so the two settings are coupled and neither should drift silently.
+  preserve_client_ip = false
 
   # Caddy's admin API on 2019 answers over plain HTTP, so it can be health-checked
   # even though 443 carries TLS that the load balancer never terminates.
@@ -77,9 +85,14 @@ resource "aws_lb_listener" "tcp" {
   tags = var.tags
 }
 
-# The pod's own hostname, and a wildcard so every store on it resolves.
+# The pod's own hostname, and a wildcard so every custom tenant domain on it resolves.
+#
+# Fully qualified against the environment's domain, not the bare zone: with env-scoped
+# hostnames the pod lives at spg-<id>.dev.example.com, and a bare label would have
+# created spg-<id>.example.com instead — matching what the tasks were told their
+# endpoint is only by accident in prod.
 resource "aws_route53_record" "pod" {
-  for_each = toset([var.pod.domain, "*.${var.pod.domain}"])
+  for_each = toset([local.pod_fqdn, "*.${local.pod_fqdn}"])
 
   zone_id = var.hosted_zone_id
   name    = each.value

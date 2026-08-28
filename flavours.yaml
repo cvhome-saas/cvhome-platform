@@ -20,6 +20,11 @@ dev:
     ui:      { cpu: 256, memory: 512 }
   desired_count: 1
   autoscale: false
+  # Is this environment precious? Drives load balancer deletion protection
+  # and whether buckets may be force-destroyed — decisions that previously
+  # rode on rds.deletion_protection, which is about something else.
+  protected: false
+  cdn_price_class: PriceClass_100
   capacity:
     # Pure Spot is fine where an interruption is an inconvenience, not an outage.
     on_demand_base: 0
@@ -49,6 +54,11 @@ staging:
     ui:      { cpu: 512, memory: 1024 }
   desired_count: 1
   autoscale: false
+  # Is this environment precious? Drives load balancer deletion protection
+  # and whether buckets may be force-destroyed — decisions that previously
+  # rode on rds.deletion_protection, which is about something else.
+  protected: false
+  cdn_price_class: PriceClass_100
   capacity:
     on_demand_base: 1
     on_demand_percent: 0
@@ -77,6 +87,11 @@ prod:
     ui:      { cpu: 512,  memory: 1024 }
   desired_count: 2
   autoscale: true
+  # Is this environment precious? Drives load balancer deletion protection
+  # and whether buckets may be force-destroyed — decisions that previously
+  # rode on rds.deletion_protection, which is about something else.
+  protected: true
+  cdn_price_class: PriceClass_All
   capacity:
     # An on-demand base means a Spot reclamation degrades capacity instead of
     # ending the service. The legacy stack ran weight-100 Spot at desired=1.
@@ -107,6 +122,11 @@ ephemeral:
     ui:      { cpu: 256, memory: 512 }
   desired_count: 1
   autoscale: false
+  # Is this environment precious? Drives load balancer deletion protection
+  # and whether buckets may be force-destroyed — decisions that previously
+  # rode on rds.deletion_protection, which is about something else.
+  protected: false
+  cdn_price_class: PriceClass_100
   capacity:
     on_demand_base: 0
     on_demand_percent: 0

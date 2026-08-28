@@ -85,11 +85,11 @@ variable "pods" {
     needs_pod_list.
   EOT
   type = map(object({
-    index    = number
-    id       = string
-    name     = string
-    endpoint = string
-    domain   = string
+    index     = number
+    id        = string
+    name      = string
+    endpoint  = string
+    namespace = string
   }))
 }
 
@@ -99,6 +99,12 @@ variable "test_stores" {
   default     = false
 }
 
+variable "postgres_version" {
+  type = string
+}
+
 variable "tags" {
-  type = map(string)
+  description = "Extra identity tags. Project/Environment/Flavour arrive via provider default_tags."
+  type        = map(string)
+  default     = {}
 }

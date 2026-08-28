@@ -23,7 +23,7 @@ resource "aws_db_instance" "this" {
   identifier = substr("${local.prefix}-${local.layer}", 0, 63)
 
   engine         = "postgres"
-  engine_version = "18.4"
+  engine_version = var.postgres_version
   instance_class = var.flavour.rds.instance_class
 
   allocated_storage     = var.flavour.rds.allocated_storage

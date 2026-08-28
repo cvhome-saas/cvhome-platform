@@ -33,5 +33,7 @@ variable "nat_gateway" {
 }
 
 variable "tags" {
-  type = map(string)
+  description = "Extra identity tags. Project/Environment/Flavour arrive via provider default_tags."
+  type        = map(string)
+  default     = {}
 }

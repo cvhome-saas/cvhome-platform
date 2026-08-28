@@ -153,5 +153,17 @@ variable "s3_bucket_arns" {
 }
 
 variable "tags" {
-  type = map(string)
+  description = "Identity tags for this service. Project/Environment/Flavour come from provider default_tags."
+  type        = map(string)
+  default     = {}
 }
+
+variable "kms_key_arns" {
+  description = <<-EOT
+    KMS keys this service may use. Only for services on the AWS secret-crypto provider
+    (AwsKmsCryptoProvider); empty while com.asrevo.cvhome.crypto.type is LOCAL.
+  EOT
+  type        = list(string)
+  default     = []
+}
+

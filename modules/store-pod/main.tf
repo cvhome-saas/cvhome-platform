@@ -18,18 +18,29 @@ locals {
   # per pod. Both namespaces are private hosted zones on the same VPC, so this resolves.
   otlp_endpoint = "http://otel-collector.${var.core_namespace}"
 
+  # No endpoint when no collector is deployed — otherwise dev pods retry gRPC exports
+  # to a service that does not exist, forever.
+  otel_spring_env = var.flavour.monitoring ? [{ name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "${local.otlp_endpoint}:4318" }] : []
+  otel_grpc_env = var.flavour.monitoring ? [
+    { name = "OTEL_EXPORTER_OTLP_PROTOCOL", value = "grpc" },
+    { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "${local.otlp_endpoint}:4317" },
+  ] : []
+
   # Every pod service is discoverable at this pod's namespace. Generated from the
   # catalog, so the legacy inconsistency — payment listing PAYMENT but not CUA, and
   # every other service listing a different subset — cannot recur.
+  #
+  # Hyphens are preserved deliberately: these are map keys in
+  # Map<String, ServiceDomain>, and Spring splits environment variable names on "_",
+  # so LANDING_UI would bind services.landing.ui rather than services["landing-ui"].
   service_namespace_env = [
     for name, _ in var.services :
-    { name = "COM_ASREVO_CVHOME_SERVICES_${upper(replace(name, "-", "_"))}_NAMESPACE", value = local.namespace }
+    { name = "COM_ASREVO_CVHOME_SERVICES_${upper(name)}_NAMESPACE", value = local.namespace }
   ]
 
   common_spring_env = concat([
     { name = "SPRING_PROFILES_ACTIVE", value = local.profiles },
     { name = "OTEL_SDK_DISABLED", value = tostring(!var.flavour.monitoring) },
-    { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "${local.otlp_endpoint}:4318" },
     { name = "COM_ASREVO_CVHOME_APP_DOMAIN", value = var.domain },
     { name = "COM_ASREVO_CVHOME_POD_DOMAIN", value = local.pod_fqdn },
     { name = "COM_ASREVO_CVHOME_SERVICES_STORE-CORE-GATEWAY_SCHEMA", value = "https" },
@@ -47,7 +58,7 @@ locals {
     { name = "COM_ASREVO_CVHOME_POD-INFO_POD_ENDPOINT_ENDPOINT", value = local.endpoint },
     { name = "COM_ASREVO_CVHOME_POD-INFO_POD_ENDPOINT_TYPE", value = "EXTERNAL" },
     { name = "COM_ASREVO_CVHOME_POD-INFO_POD_DOMAIN", value = local.pod_fqdn },
-  ], local.service_namespace_env)
+  ], local.otel_spring_env, local.service_namespace_env)
 
   cdn_env = [
     { name = "COM_ASREVO_CVHOME_CDN_STORAGE_PROVIDER", value = "S3" },
@@ -66,21 +77,24 @@ locals {
     { name = "SPRING_DATASOURCE_PASSWORD", valueFrom = "${aws_db_instance.this.master_user_secret[0].secret_arn}:password::" },
   ]
 
-  node_env = [
-    { name = "OTEL_EXPORTER_OTLP_PROTOCOL", value = "grpc" },
-    { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "${local.otlp_endpoint}:4317" },
-  ]
+  node_env = concat(
+    [{ name = "OTEL_SDK_DISABLED", value = tostring(!var.flavour.monitoring) }],
+    local.otel_grpc_env,
+  )
 
   # Caddy's own configuration, not Spring's.
-  caddy_env = [
+  caddy_env = concat([
     { name = "NAMESPACE", value = local.namespace },
     { name = "CERT_BUCKET", value = aws_s3_bucket.certs.id },
     { name = "CERT_BUCKET_REGION", value = aws_s3_bucket.certs.region },
     { name = "DOMAIN_LOOKUP_TTL", value = var.env == "prod" ? "5m" : "1m" },
     { name = "OTEL_SERVICE_NAME", value = "spg" },
-    { name = "OTEL_EXPORTER_OTLP_PROTOCOL", value = "grpc" },
-    { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "${local.otlp_endpoint}:4317" },
-  ]
+  ], local.otel_grpc_env)
+
+  template_vars = {
+    namespace = local.namespace
+    ports     = { for n, sv in var.services : n => sv.port }
+  }
 
   services = {
     for name, svc in var.services : name => merge(svc, {
@@ -94,8 +108,10 @@ locals {
         svc.runtime == "caddy" ? local.caddy_env : [],
         try(svc.cdn, false) ? local.cdn_env : [],
         try(svc.database, false) ? local.database_env : [],
-        # extra_env may reference ${namespace}; nothing else is interpolated.
-        [for k, v in try(svc.extra_env, {}) : { name = k, value = replace(v, "$${namespace}", local.namespace) }],
+        # extra_env is rendered, not string-replaced: ${namespace} and ${ports.<svc>}
+        # come from the catalog itself, so spg's merchant URL cannot drift from
+        # merchant's declared port.
+        [for k, v in try(svc.extra_env, {}) : { name = k, value = templatestring(v, local.template_vars) }],
       )
 
       secrets = try(svc.database, false) ? local.database_secret : []

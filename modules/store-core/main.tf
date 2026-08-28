@@ -17,10 +17,21 @@ locals {
 
   otlp_endpoint = "http://otel-collector.${local.namespace}"
 
+  # Only point at the collector when one is actually deployed. Previously the endpoint
+  # was always set, so under dev every service retried exports to a service that did
+  # not exist.
+  otel_spring_env = var.flavour.monitoring ? [
+    { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "${local.otlp_endpoint}:4318" },
+  ] : []
+
+  otel_node_env = var.flavour.monitoring ? [
+    { name = "OTEL_EXPORTER_OTLP_PROTOCOL", value = "grpc" },
+    { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "${local.otlp_endpoint}:4317" },
+  ] : []
+
   common_spring_env = [
     { name = "SPRING_PROFILES_ACTIVE", value = local.profiles },
     { name = "OTEL_SDK_DISABLED", value = tostring(!var.flavour.monitoring) },
-    { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "${local.otlp_endpoint}:4318" },
     { name = "COM_ASREVO_CVHOME_APP_DOMAIN", value = var.domain },
     { name = "COM_ASREVO_CVHOME_APP_HANDLERS[0].schema", value = "https" },
     { name = "COM_ASREVO_CVHOME_APP_HANDLERS[0].port", value = "443" },
@@ -32,10 +43,21 @@ locals {
 
   # Every service is reachable over TLS at the edge on 443, whatever its container port.
   # Generated from the catalog so a renamed service cannot leave a stale entry behind.
+  #
+  # The hyphen is load-bearing and must NOT be converted to an underscore.
+  # ServiceDomainProperties is Map<String, ServiceDomain>, so these names are map KEYS.
+  # Spring builds a key from an environment variable by splitting on "_", so an
+  # underscore becomes a nesting level:
+  #
+  #   ..._SERVICES_STORE-CORE-GATEWAY_SCHEMA -> services["store-core-gateway"].schema  OK
+  #   ..._SERVICES_STORE_CORE_GATEWAY_SCHEMA -> services.store.core.gateway.schema     lost
+  #
+  # The wrong form binds nothing and reports no error: the service keeps the http/8000
+  # defaults from common-config.yml and builds http:// URLs behind an https:// edge.
   edge_scheme_env = flatten([
     for name, svc in var.services : [
-      { name = "COM_ASREVO_CVHOME_SERVICES_${upper(replace(name, "-", "_"))}_SCHEMA", value = "https" },
-      { name = "COM_ASREVO_CVHOME_SERVICES_${upper(replace(name, "-", "_"))}_PORT", value = "443" },
+      { name = "COM_ASREVO_CVHOME_SERVICES_${upper(name)}_SCHEMA", value = "https" },
+      { name = "COM_ASREVO_CVHOME_SERVICES_${upper(name)}_PORT", value = "443" },
     ] if try(svc.edge.lb, "") == "alb"
   ])
 
@@ -43,7 +65,7 @@ locals {
   spg_env = local.default_pod == null ? [] : [
     { name = "COM_ASREVO_CVHOME_SERVICES_SPG_SCHEMA", value = "https" },
     { name = "COM_ASREVO_CVHOME_SERVICES_SPG_PORT", value = "443" },
-    { name = "COM_ASREVO_CVHOME_SERVICES_STORE_NAMESPACE", value = local.default_pod.domain },
+    { name = "COM_ASREVO_CVHOME_SERVICES_STORE_NAMESPACE", value = local.default_pod.namespace },
   ]
 
   pod_list_env = flatten([
@@ -66,10 +88,10 @@ locals {
     { name = "SPRING_DATASOURCE_PASSWORD", valueFrom = "${aws_db_instance.this.master_user_secret[0].secret_arn}:password::" },
   ]
 
-  node_env = [
-    { name = "OTEL_EXPORTER_OTLP_PROTOCOL", value = "grpc" },
-    { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "${local.otlp_endpoint}:4317" },
-  ]
+  node_env = concat(
+    [{ name = "OTEL_SDK_DISABLED", value = tostring(!var.flavour.monitoring) }],
+    local.otel_node_env,
+  )
 
   # Named secrets this layer can bind, as "<name>:<json-key>" in the catalog.
   secret_arns = {
@@ -85,7 +107,7 @@ locals {
       size  = var.flavour.sizes[svc.size]
 
       environment = concat(
-        svc.runtime == "spring" ? local.common_spring_env : [],
+        svc.runtime == "spring" ? concat(local.common_spring_env, local.otel_spring_env) : [],
         svc.runtime == "spring" ? local.edge_scheme_env : [],
         svc.runtime == "spring" ? local.spg_env : [],
         svc.runtime == "node" ? concat(local.node_env, [{ name = "OTEL_SERVICE_NAME", value = name }]) : [],

@@ -18,11 +18,9 @@ locals {
     }
   ]...)
 
-  # Deterministic rule priorities: more specific hosts (more labels) first, then
-  # alphabetical, so a plan never churns priorities when a service is added.
-  rule_order = [
-    for i, name in sort(keys(local.alb_services)) : name
-  ]
+  # Priorities come from the catalog, not from position. They were derived with
+  # index(sort(keys(...))), so adding any service that sorted earlier renumbered every
+  # rule after it — the opposite of what the comment here used to claim.
 }
 
 resource "aws_security_group" "alb" {
@@ -53,12 +51,15 @@ resource "aws_vpc_security_group_egress_rule" "alb" {
 }
 
 resource "aws_lb" "this" {
-  name               = substr("${local.prefix}-core", 0, 32)
+  # name_prefix (max 6) rather than a truncated name. substr() to 32 already overflowed
+  # at project "cvhome" + env "staging", and could truncate onto a hyphen, which AWS
+  # rejects. AWS appends the uniqueness suffix itself.
+  name_prefix        = "core-"
   load_balancer_type = "application"
   subnets            = var.public_subnet_ids
   security_groups    = [aws_security_group.alb.id]
 
-  enable_deletion_protection = var.flavour.rds.deletion_protection
+  enable_deletion_protection = var.flavour.protected
   drop_invalid_header_fields = true
 
   access_logs {
@@ -73,7 +74,9 @@ resource "aws_lb" "this" {
 resource "aws_lb_target_group" "service" {
   for_each = local.alb_services
 
-  name        = substr("${local.prefix}-${each.key}", 0, 32)
+  # Also name_prefix: with a fixed name, create_before_destroy could never replace a
+  # target group — the new one collided with the old one's name.
+  name_prefix = substr(replace(each.key, "-", ""), 0, 5)
   port        = each.value.port
   protocol    = "HTTP"
   target_type = "ip"
@@ -144,7 +147,7 @@ resource "aws_lb_listener_rule" "host" {
   for_each = local.alb_services
 
   listener_arn = aws_lb_listener.https.arn
-  priority     = index(local.rule_order, each.key) + 1
+  priority     = each.value.edge.priority
 
   action {
     type             = "forward"

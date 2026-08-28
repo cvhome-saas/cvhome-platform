@@ -25,12 +25,11 @@ data "aws_route53_zone" "this" {
   zone_id = local.hosted_zone_id
 }
 
-# Created in the prereq state, alongside the ECR repositories, because the certificate
-# must exist and be validated before the ALB listener can reference it.
-data "aws_acm_certificate" "this" {
-  domain      = data.aws_route53_zone.this.name
-  statuses    = ["ISSUED"]
-  most_recent = true
+# Published by the prereq state. Read explicitly rather than looked up by domain: a
+# data-source lookup with most_recent = true selects any issued certificate for the
+# domain in the account, including one this stack does not own.
+data "aws_ssm_parameter" "prereq" {
+  name = "/${var.project}/${var.env}/prereq"
 }
 
 locals {
@@ -42,11 +41,20 @@ locals {
   # SSM holds what the bootstrap generated; tfvars holds what a human chose; tfvars
   # wins. Someone who never touches git still gets a working environment, and a team
   # that does gets reviewable diffs.
-  ssm = jsondecode(data.aws_ssm_parameter.config.value)
+  ssm    = jsondecode(data.aws_ssm_parameter.config.value)
+  prereq = jsondecode(data.aws_ssm_parameter.prereq.value)
 
   hosted_zone_id = coalesce(var.hosted_zone_id, local.ssm.hosted_zone_id)
-  image_tag      = coalesce(var.image_tag, try(local.ssm.image_tag, "latest"))
-  pod_ids        = coalesce(var.pod_ids, try(local.ssm.pod_ids, []))
+
+  # Every hostname sits under an env-scoped label below prod, so two environments can
+  # share a hosted zone. Previously the apex, www, uaa, console-ui and every pod record
+  # were env-independent, so dev and prod fought over identical Route53 records and the
+  # last apply won. Derived the same way in the prereq root, which mints the matching
+  # certificate; the value it used is echoed back here as a cross-check.
+  dns_prefix = coalesce(var.dns_prefix, var.env == "prod" ? "" : var.env)
+  app_domain = local.dns_prefix == "" ? data.aws_route53_zone.this.name : "${local.dns_prefix}.${data.aws_route53_zone.this.name}"
+  image_tag  = coalesce(var.image_tag, try(local.ssm.image_tag, "latest"))
+  pod_ids    = coalesce(var.pod_ids, try(local.ssm.pod_ids, []))
 
   # ------------------------------------------------------------------- the flavour
   #
@@ -63,10 +71,14 @@ locals {
 
   # ----------------------------------------------------------------------- pods
   #
-  # Pod 1 is the default pod every environment has; the rest come from pod_ids.
-  # `short` is the 8-character prefix the application already uses in hostnames
-  # and namespace names.
-  all_pod_ids = concat(["507f1f77bcf86cd799439011"], local.pod_ids)
+  # Every environment has one pod without being asked. Its id is fixed rather than
+  # generated so that a rebuilt environment keeps the same storefront hostname and
+  # Cloud Map namespace; the application's own local profile uses the same value.
+  default_pod_id = "507f1f77bcf86cd799439011"
+
+  # `short` is the 8-character prefix the application already uses in hostnames and
+  # namespace names, so it must be unique across pods — see the precondition below.
+  all_pod_ids = concat([local.default_pod_id], local.pod_ids)
 
   pods = {
     for i, id in local.all_pod_ids : "pod-${i + 1}" => {
@@ -81,17 +93,33 @@ locals {
   # What store-core needs to know about each pod.
   pod_summaries = {
     for key, pod in local.pods : key => {
-      index    = pod.index
-      id       = pod.id
-      name     = pod.name
-      endpoint = "https://${pod.domain}.${data.aws_route53_zone.this.name}"
-      domain   = "store-pod-${pod.short}.${var.project}-${var.env}.lcl"
+      index     = pod.index
+      id        = pod.id
+      name      = pod.name
+      endpoint  = "https://${pod.domain}.${local.app_domain}"
+      namespace = "store-pod-${pod.short}.${var.project}-${var.env}.lcl"
     }
   }
 
   docker_registry = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.region}.amazonaws.com/${var.project}"
+}
 
-  tags = {}
+# B2/B3: fail at plan time, with a sentence, rather than mid-apply with an AWS error.
+resource "terraform_data" "guards" {
+  lifecycle {
+    precondition {
+      condition     = length(distinct([for p in local.pods : p.short])) == length(local.pods)
+      error_message = "Two pods share the first 8 characters of their id, which is what names the Cloud Map namespace, load balancer, database and DNS record. Regenerate pod_ids with fully random values."
+    }
+    precondition {
+      condition     = length(var.project) + length(var.env) <= 34
+      error_message = "project + env is ${length(var.project) + length(var.env)} characters. Names built from both must fit AWS limits — keep the total at 34 or below."
+    }
+    precondition {
+      condition     = local.prereq.app_domain == local.app_domain
+      error_message = "The certificate in the prereq state covers '${local.prereq.app_domain}', but this environment serves '${local.app_domain}'. Re-apply prereq first."
+    }
+  }
 }
 
 # ------------------------------------------------------------------------- network
@@ -107,14 +135,13 @@ module "network" {
   private_tasks = local.flavour.private_tasks
   nat_gateway   = local.flavour.nat_gateway
 
-  tags = local.tags
 }
 
 # --------------------------------------------------------------------------- logs
 
 resource "aws_s3_bucket" "logs" {
   bucket_prefix = "${var.project}-${var.env}-logs-"
-  force_destroy = !local.flavour.rds.deletion_protection
+  force_destroy = !local.flavour.protected
 
   tags = { Name = "${var.project}-${var.env}-logs" }
 }
@@ -159,36 +186,6 @@ data "aws_iam_policy_document" "logs" {
     }
   }
 
-  # NLB access logs come from the delivery service principal instead.
-  statement {
-    sid       = "NlbAccessLogs"
-    effect    = "Allow"
-    actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.logs.arn}/*"]
-
-    principals {
-      type        = "Service"
-      identifiers = ["delivery.logs.amazonaws.com"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "s3:x-amz-acl"
-      values   = ["bucket-owner-full-control"]
-    }
-  }
-
-  statement {
-    sid       = "NlbAccessLogsAcl"
-    effect    = "Allow"
-    actions   = ["s3:GetBucketAcl"]
-    resources = [aws_s3_bucket.logs.arn]
-
-    principals {
-      type        = "Service"
-      identifiers = ["delivery.logs.amazonaws.com"]
-    }
-  }
 }
 
 resource "aws_s3_bucket_policy" "logs" {
@@ -211,9 +208,9 @@ module "store_core" {
   otel_collector = local.catalog.infra["otel-collector"]
   flavour        = local.flavour
 
-  domain          = data.aws_route53_zone.this.name
+  domain          = local.app_domain
   hosted_zone_id  = local.hosted_zone_id
-  certificate_arn = data.aws_acm_certificate.this.arn
+  certificate_arn = local.prereq.certificate_arn
 
   vpc_id                     = module.network.vpc_id
   vpc_cidr_block             = module.network.cidr_block
@@ -226,10 +223,10 @@ module "store_core" {
   docker_registry = local.docker_registry
   image_tag       = local.image_tag
 
-  pods        = local.pod_summaries
-  test_stores = var.test_stores
+  pods             = local.pod_summaries
+  test_stores      = var.test_stores
+  postgres_version = var.postgres_version
 
-  tags = local.tags
 }
 
 # ------------------------------------------------------------------------ store-pod
@@ -245,7 +242,7 @@ module "store_pod" {
   services = local.catalog.pod
   flavour  = local.flavour
 
-  domain         = data.aws_route53_zone.this.name
+  domain         = local.app_domain
   hosted_zone_id = local.hosted_zone_id
   core_namespace = module.store_core.namespace
 
@@ -256,11 +253,12 @@ module "store_pod" {
   assign_public_ip           = module.network.assign_public_ip
   database_subnet_group_name = module.network.database_subnet_group_name
 
-  log_bucket_id   = aws_s3_bucket.logs.id
+  # No log_bucket_id: a network load balancer only writes access logs for TLS
+  # listeners, and these are TCP passthrough so Caddy can terminate TLS itself.
   docker_registry = local.docker_registry
   image_tag       = local.image_tag
 
-  test_stores = var.test_stores
+  test_stores      = var.test_stores
+  postgres_version = var.postgres_version
 
-  tags = local.tags
 }

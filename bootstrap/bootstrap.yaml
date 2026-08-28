@@ -27,7 +27,7 @@ Parameters:
   ProjectId:
     Type: String
     Default: cvhome
-    AllowedPattern: "^[a-z0-9][a-z0-9-]{1,20}$"
+    AllowedPattern: "^[a-z0-9][a-z0-9-]{1,17}$"
     Description: >-
       Stable identifier shared by every environment in this account. Deliberately NOT
       random: the legacy stack generated a random 4-character id here while GitHub
@@ -37,8 +37,12 @@ Parameters:
   EnvName:
     Type: String
     Default: dev
-    AllowedPattern: "^[a-z0-9][a-z0-9-]{0,12}$"
-    Description: Environment name. One stack is one environment.
+    AllowedPattern: "^[a-z0-9][a-z0-9-]{0,9}$"
+    Description: >-
+      Environment name. One stack is one environment. Below prod every hostname sits
+      under this label (console-ui.dev.example.com), so several environments can share
+      one hosted zone; prod owns the bare apex. Length is capped because project and
+      env together feed IAM role names, which stop at 64 characters.
 
   Flavour:
     Type: String
@@ -162,7 +166,7 @@ Resources:
       Role: !GetAtt PodIdFunctionRole.Arn
       Code:
         ZipFile: |
-          import json, os, secrets, time
+          import json, secrets
           import cfnresponse
 
           def handler(event, context):
@@ -170,8 +174,20 @@ Resources:
                   if event["RequestType"] == "Delete":
                       return cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, event["PhysicalResourceId"])
                   count = int(event["ResourceProperties"].get("PodCount", 0))
-                  # 24 hex characters, the shape the application already uses for pod ids.
-                  ids = [f"{int(time.time()):08x}{secrets.token_hex(8)}" for _ in range(count)]
+
+                  # 24 hex characters, FULLY RANDOM. Not an ObjectId shape: an ObjectId
+                  # begins with a 4-byte timestamp, and Terraform takes substr(id, 0, 8)
+                  # as the pod's short name -- which would be exactly that timestamp.
+                  # Every pod generated in this one loop shares the same second, so they
+                  # would all collapse to one short name, one Cloud Map namespace, one
+                  # load balancer name and one DNS record.
+                  ids = []
+                  while len(ids) < count:
+                      candidate = secrets.token_hex(12)
+                      # Belt and braces: the 8-character prefix is what must be unique.
+                      if all(candidate[:8] != existing[:8] for existing in ids):
+                          ids.append(candidate)
+
                   return cfnresponse.send(
                       event, context, cfnresponse.SUCCESS,
                       {"PodIdsJson": json.dumps(ids)},

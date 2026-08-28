@@ -121,6 +121,24 @@ credentials, so they run on forks; only the plan job assumes a role, via OIDC.
 setup applied from both, with two different project ids, against two different state
 keys.
 
+## Hostnames and environments
+
+Below prod, every hostname sits under an environment label, so several environments can
+share one hosted zone:
+
+```
+prod       gateway.com          console-ui.gateway.com          spg-<pod>.gateway.com
+staging    staging.gateway.com  console-ui.staging.gateway.com  spg-<pod>.staging.gateway.com
+dev        dev.gateway.com      console-ui.dev.gateway.com      spg-<pod>.dev.gateway.com
+```
+
+The prereq state mints a certificate for `<env-domain>` and `*.<env-domain>`, and the
+environment root asserts the two agree before it applies. Override the label with
+`dns_prefix` in both roots, or not at all.
+
+Without this, every environment claimed the same records — apex, `www`, `uaa`,
+`console-ui` and each pod — and the last apply won.
+
 ## Configuration precedence
 
 ```

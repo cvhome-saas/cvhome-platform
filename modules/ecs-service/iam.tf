@@ -28,9 +28,16 @@ data "aws_iam_policy_document" "assume" {
 # --- execution role: what the ECS agent needs before the container starts ---------
 
 resource "aws_iam_role" "execution" {
-  name               = "${local.prefix}-${local.qualified_name}-exec"
+  name               = "${local.role_base}-exec"
   assume_role_policy = data.aws_iam_policy_document.assume.json
   tags               = var.tags
+
+  lifecycle {
+    precondition {
+      condition     = length("${local.role_base}-exec") <= 64
+      error_message = "IAM role name '${local.role_base}-exec' is ${length("${local.role_base}-exec")} characters; the limit is 64. Shorten var.project or var.env."
+    }
+  }
 }
 
 data "aws_iam_policy_document" "execution" {
@@ -74,7 +81,7 @@ data "aws_iam_policy_document" "execution" {
 }
 
 resource "aws_iam_role_policy" "execution" {
-  name   = "${local.prefix}-${local.qualified_name}-exec"
+  name   = "${local.role_base}-exec"
   role   = aws_iam_role.execution.id
   policy = data.aws_iam_policy_document.execution.json
 }
@@ -82,7 +89,7 @@ resource "aws_iam_role_policy" "execution" {
 # --- task role: what the application itself needs at runtime ---------------------
 
 resource "aws_iam_role" "task" {
-  name               = "${local.prefix}-${local.qualified_name}-task"
+  name               = "${local.role_base}-task"
   assume_role_policy = data.aws_iam_policy_document.assume.json
   tags               = var.tags
 }
@@ -124,6 +131,18 @@ data "aws_iam_policy_document" "task" {
     }
   }
 
+  # Only for services on the AWS secret-crypto provider. Empty while crypto.type is LOCAL,
+  # but the path exists so flipping it does not require touching this module.
+  dynamic "statement" {
+    for_each = length(var.kms_key_arns) > 0 ? [1] : []
+    content {
+      sid       = "SecretCrypto"
+      effect    = "Allow"
+      actions   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"]
+      resources = var.kms_key_arns
+    }
+  }
+
   # Only services the catalog marks cdn:true, or spg's certificate store, get here.
   dynamic "statement" {
     for_each = length(var.s3_bucket_arns) > 0 ? [1] : []
@@ -143,7 +162,7 @@ data "aws_iam_policy_document" "task" {
 }
 
 resource "aws_iam_role_policy" "task" {
-  name   = "${local.prefix}-${local.qualified_name}-task"
+  name   = "${local.role_base}-task"
   role   = aws_iam_role.task.id
   policy = data.aws_iam_policy_document.task.json
 }
