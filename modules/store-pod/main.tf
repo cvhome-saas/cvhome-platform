@@ -81,6 +81,10 @@ locals {
   # sync failure, so a misconfigured CDN costs the storefront latency rather than availability.
   static_assets_prefix = "storefront"
 
+  # How much longer a build's assets outlive its marker. Any boot in this window finds
+  # no marker and re-uploads, which is the safe direction to fail in.
+  static_assets_grace_days = 30
+
   static_assets_env = [
     { name = "STATIC_ASSETS_SYNC_ENABLED", value = "true" },
     { name = "STATIC_ASSETS_S3_BUCKET", value = aws_s3_bucket.cdn.id },

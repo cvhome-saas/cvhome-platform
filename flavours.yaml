@@ -31,6 +31,12 @@ dev:
   # A production build compiles those previews out unless STOREFRONT_THEME_OVERRIDE says
   # otherwise. Cookie-scoped to the browser that asks: a review tool, not a tenant's shop.
   storefront_previews: true
+  # How long a storefront build's marker object is kept in the pod's CDN bucket. Its
+  # static output is kept 30 days longer, so the marker always dies first: see the
+  # lifecycle rules in modules/store-pod/storage.tf for why that ordering matters.
+  # A task that runs longer than the asset window loses the assets it is serving, so
+  # this wants to exceed the longest task lifetime the environment realistically sees.
+  static_asset_retention_days: 30
   cdn_price_class: PriceClass_100
   capacity:
     # Pure Spot is fine where an interruption is an inconvenience, not an outage.
@@ -92,6 +98,12 @@ staging:
   # A production build compiles those previews out unless STOREFRONT_THEME_OVERRIDE says
   # otherwise. Cookie-scoped to the browser that asks: a review tool, not a tenant's shop.
   storefront_previews: true
+  # How long a storefront build's marker object is kept in the pod's CDN bucket. Its
+  # static output is kept 30 days longer, so the marker always dies first: see the
+  # lifecycle rules in modules/store-pod/storage.tf for why that ordering matters.
+  # A task that runs longer than the asset window loses the assets it is serving, so
+  # this wants to exceed the longest task lifetime the environment realistically sees.
+  static_asset_retention_days: 30
   cdn_price_class: PriceClass_100
   capacity:
     on_demand_base: 1
@@ -142,6 +154,12 @@ prod:
   # A production build compiles those previews out unless STOREFRONT_THEME_OVERRIDE says
   # otherwise. Cookie-scoped to the browser that asks: a review tool, not a tenant's shop.
   storefront_previews: false
+  # How long a storefront build's marker object is kept in the pod's CDN bucket. Its
+  # static output is kept 30 days longer, so the marker always dies first: see the
+  # lifecycle rules in modules/store-pod/storage.tf for why that ordering matters.
+  # A task that runs longer than the asset window loses the assets it is serving, so
+  # this wants to exceed the longest task lifetime the environment realistically sees.
+  static_asset_retention_days: 180
   cdn_price_class: PriceClass_All
   capacity:
     # An on-demand base means a Spot reclamation degrades capacity instead of
@@ -184,6 +202,12 @@ ephemeral:
   # A production build compiles those previews out unless STOREFRONT_THEME_OVERRIDE says
   # otherwise. Cookie-scoped to the browser that asks: a review tool, not a tenant's shop.
   storefront_previews: true
+  # How long a storefront build's marker object is kept in the pod's CDN bucket. Its
+  # static output is kept 30 days longer, so the marker always dies first: see the
+  # lifecycle rules in modules/store-pod/storage.tf for why that ordering matters.
+  # A task that runs longer than the asset window loses the assets it is serving, so
+  # this wants to exceed the longest task lifetime the environment realistically sees.
+  static_asset_retention_days: 7
   cdn_price_class: PriceClass_100
   capacity:
     on_demand_base: 0

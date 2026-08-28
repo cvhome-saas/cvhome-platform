@@ -150,3 +150,61 @@ resource "aws_s3_bucket_policy" "cdn" {
 
   depends_on = [aws_s3_bucket_public_access_block.cdn]
 }
+
+# Only two things under the storefront prefix grow without bound: the hashed output in
+# _next/static, which gets new filenames every build, and one marker per build. Files
+# from public/ are not hashed, so every build overwrites the same keys and they need no
+# rule at all. Tenant media lives outside this prefix and is never touched here.
+#
+# The two windows are deliberately different, and the order is the whole point.
+# sync-s3.mjs writes the marker last, after every asset, so it is the newest object of a
+# build. Under one uniform rule the assets would expire first and leave the marker
+# standing, and a task booting into that gap finds the marker, skips the upload, and
+# serves 404s for the rest of its life. Expiring the marker first makes the only
+# reachable failure the harmless one: no marker, so the next boot re-uploads.
+#
+# The residual risk is a task that outlives the asset window, because a running task
+# never re-syncs. That is what static_asset_retention_days is for: it should exceed the
+# longest task lifetime the environment realistically sees.
+resource "aws_s3_bucket_lifecycle_configuration" "cdn" {
+  bucket = aws_s3_bucket.cdn.id
+
+  rule {
+    id     = "storefront-build-markers"
+    status = "Enabled"
+
+    filter {
+      prefix = "${local.static_assets_prefix}/_builds/"
+    }
+
+    expiration {
+      days = var.flavour.static_asset_retention_days
+    }
+  }
+
+  rule {
+    id     = "storefront-static-output"
+    status = "Enabled"
+
+    filter {
+      prefix = "${local.static_assets_prefix}/_next/"
+    }
+
+    expiration {
+      days = var.flavour.static_asset_retention_days + local.static_assets_grace_days
+    }
+  }
+
+  # Parts of a failed multipart upload are invisible in the console and billed until
+  # they are aborted. Applies to the whole bucket, tenant media included.
+  rule {
+    id     = "abort-incomplete-uploads"
+    status = "Enabled"
+
+    filter {}
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
