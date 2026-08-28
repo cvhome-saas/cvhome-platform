@@ -280,9 +280,20 @@ Resources:
                 Action: [rds:StopDBInstance, rds:StartDBInstance]
                 Resource: !Sub "arn:aws:rds:${AWS::Region}:${AWS::AccountId}:db:*"
 
-              - Sid: WriteHibernationFlag
+              # Covers the hibernation flag and the prereq outputs the environment
+              # apply reads back. The tag actions are not extra reach: the provider
+              # sets default_tags on every resource, so tagging is part of creating a
+              # parameter and PutParameter alone fails with AccessDeniedException on
+              # ssm:AddTagsToResource. DeleteParameter is what lets the destroy project
+              # tear the parameter down again.
+              - Sid: WriteParameters
                 Effect: Allow
-                Action: ssm:PutParameter
+                Action:
+                  - ssm:PutParameter
+                  - ssm:DeleteParameter
+                  - ssm:AddTagsToResource
+                  - ssm:RemoveTagsFromResource
+                  - ssm:ListTagsForResource
                 Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectId}/*"
 
               - Sid: ReadConfigAndSecrets
