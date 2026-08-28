@@ -260,6 +260,11 @@ module "store_pod" {
   hosted_zone_id = local.hosted_zone_id
   core_namespace = module.store_core.namespace
 
+  # try: a prereq state written before the edge certificate existed has no such key,
+  # and the pod falls back to the CloudFront default domain rather than failing the
+  # apply. Re-running prereq fills it in.
+  cdn_certificate_arn = try(local.prereq.cdn_certificate_arn, null)
+
   vpc_id                     = module.network.vpc_id
   vpc_cidr_block             = module.network.cidr_block
   public_subnet_ids          = module.network.public_subnet_ids

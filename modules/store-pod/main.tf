@@ -8,6 +8,16 @@ locals {
   pod_fqdn = "${var.pod.domain}.${var.domain}"
   endpoint = "https://${local.pod_fqdn}"
 
+  # The CDN's own hostname, one per pod like the bucket and the distribution behind it.
+  # Covered by the wildcard on the edge certificate, so adding a pod needs no new
+  # certificate. Null until prereq has published an edge certificate, and every use of
+  # it falls back to the CloudFront domain while that is the case.
+  cdn_fqdn = var.cdn_certificate_arn == null ? null : "cdn-${var.pod.short}.${var.domain}"
+
+  # What asset URLs are built from. A name this project controls, so the distribution
+  # can be replaced without rewriting every URL baked into a build.
+  cdn_base = "https://${coalesce(local.cdn_fqdn, aws_cloudfront_distribution.cdn.domain_name)}"
+
   # ------------------------------------------------------------------ env, once
   #
   # store-pod-cluster.tf was 654 lines because these ~25 variables were pasted into
@@ -63,7 +73,7 @@ locals {
   cdn_env = [
     { name = "COM_ASREVO_CVHOME_CDN_STORAGE_PROVIDER", value = "S3" },
     { name = "COM_ASREVO_CVHOME_CDN_STORAGE_BUCKET", value = aws_s3_bucket.cdn.id },
-    { name = "COM_ASREVO_CVHOME_CDN_BASE-PATH", value = "https://${aws_cloudfront_distribution.cdn.domain_name}" },
+    { name = "COM_ASREVO_CVHOME_CDN_BASE-PATH", value = local.cdn_base },
   ]
 
   # The Next.js storefront ships its own build output — `.next/static` and `public` — which
@@ -89,7 +99,7 @@ locals {
     { name = "STATIC_ASSETS_SYNC_ENABLED", value = "true" },
     { name = "STATIC_ASSETS_S3_BUCKET", value = aws_s3_bucket.cdn.id },
     { name = "STATIC_ASSETS_S3_PREFIX", value = local.static_assets_prefix },
-    { name = "STATIC_ASSETS_BASE_URL", value = "https://${aws_cloudfront_distribution.cdn.domain_name}/${local.static_assets_prefix}" },
+    { name = "STATIC_ASSETS_BASE_URL", value = "${local.cdn_base}/${local.static_assets_prefix}" },
     { name = "AWS_REGION", value = aws_s3_bucket.cdn.region },
   ]
 

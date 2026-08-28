@@ -134,6 +134,48 @@ resource "aws_acm_certificate_validation" "this" {
   validation_record_fqdns = [aws_route53_record.validation.fqdn]
 }
 
+# CloudFront serves TLS from its own edge and only accepts a certificate issued in
+# us-east-1, whatever region the rest of the environment runs in. So the same two names
+# are certified twice: once where the load balancers are, once for the edge.
+#
+# No second validation record. ACM documents that the DNS validation token is not
+# region scoped: "you can create one DNS CNAME record and use it to obtain certificates
+# in the same AWS account in any AWS Region". Writing a second record for the same name
+# is what the comment above warns about, and it is not needed.
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+
+  default_tags {
+    tags = {
+      Project     = var.project
+      Environment = var.env
+      ManagedBy   = "terraform"
+      Repository  = "cvhome-platform"
+      State       = "prereq"
+    }
+  }
+}
+
+resource "aws_acm_certificate" "cdn" {
+  provider = aws.us_east_1
+
+  domain_name               = local.app_domain
+  subject_alternative_names = ["*.${local.app_domain}"]
+  validation_method         = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_acm_certificate_validation" "cdn" {
+  provider = aws.us_east_1
+
+  certificate_arn         = aws_acm_certificate.cdn.arn
+  validation_record_fqdns = [aws_route53_record.validation.fqdn]
+}
+
 # The env root reads the ARN from here rather than looking a certificate up by domain.
 # A data-source lookup with most_recent = true would happily select any other issued
 # certificate for the same domain in the account.
@@ -144,8 +186,10 @@ resource "aws_ssm_parameter" "outputs" {
 
   value = jsonencode({
     certificate_arn = aws_acm_certificate_validation.this.certificate_arn
-    app_domain      = local.app_domain
-    dns_prefix      = local.dns_prefix
-    registry        = split("/", values(aws_ecr_repository.this)[0].repository_url)[0]
+    # The edge certificate, for CloudFront only.
+    cdn_certificate_arn = aws_acm_certificate_validation.cdn.certificate_arn
+    app_domain          = local.app_domain
+    dns_prefix          = local.dns_prefix
+    registry            = split("/", values(aws_ecr_repository.this)[0].repository_url)[0]
   })
 }
