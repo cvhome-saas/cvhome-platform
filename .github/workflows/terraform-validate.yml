@@ -71,20 +71,15 @@ jobs:
 
       # Which branch of the application to compare against.
       #
-      # The two repositories do not share a trunk name. This repository's trunk is
-      # main; the application's living trunk is develop, and its main is well behind —
-      # at the time of writing it still carries control-plane and seller-ui, the names
-      # this platform was built to replace. So matching purely on branch name would
-      # compare current infrastructure against a stale application and fail forever.
+      # Both repositories now trunk on main: the application renamed develop to main,
+      # so trunk maps to trunk by name. Off-trunk, the same branch name wins when it
+      # exists, because a new service and the catalog entry describing it are one
+      # change split across two repositories and are normally developed under one
+      # name. Anything else falls back to the application trunk, which is the common
+      # case: most platform work touches no service at all.
       #
-      # Trunk maps to trunk. Off-trunk, the same branch name wins when it exists,
-      # because a new service and the catalog entry describing it are one change split
-      # across two repositories and are normally developed under one name. Anything
-      # else falls back to the application trunk, which is the common case: most
-      # platform work touches no service at all.
-      #
-      # Set the APP_REF repository variable to move the target — when the application
-      # finally merges develop into main, that is a one-line change with no edit here.
+      # Set the APP_REF repository variable to move the target if the application's
+      # trunk ever moves again — a variable, not an edit here.
       - name: Resolve the application branch
         id: app
         env:
@@ -99,7 +94,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           APP_REPO: ${{ vars.APP_REPO || 'cvhome-saas/cvhome' }}
           # The application branch this repository's trunk targets.
-          APP_TRUNK: ${{ vars.APP_REF || 'develop' }}
+          APP_TRUNK: ${{ vars.APP_REF || 'main' }}
           OUR_TRUNK: ${{ github.event.repository.default_branch }}
           # On a pull request, ref_name is the merge ref (123/merge), so the source
           # branch has to come from head_ref instead.
@@ -116,10 +111,21 @@ jobs:
             exit 1
           fi
 
+          # Ask whether a branch exists, and mean it. GitHub keeps a permanent redirect
+          # from a renamed branch's old name, so the REST endpoint answers 200 with the
+          # new branch for a name that no longer exists. git has no such redirect: it
+          # fetches the literal refspec and fails. That gap is not hypothetical — it is
+          # how a stale 'develop' passed this check and then broke the checkout below
+          # after the application renamed develop to main. Comparing the name the API
+          # echoes back against the one asked for closes it.
+          has_branch() {
+            [ "$(gh api "repos/${APP_REPO}/branches/$1" --jq .name 2>/dev/null)" = "$1" ]
+          }
+
           if [ "$CANDIDATE" = "$OUR_TRUNK" ]; then
             ref="$APP_TRUNK"
             why="trunk maps to trunk (${OUR_TRUNK} -> ${APP_TRUNK})"
-          elif gh api "repos/${APP_REPO}/branches/${CANDIDATE}" >/dev/null 2>&1; then
+          elif has_branch "$CANDIDATE"; then
             ref="$CANDIDATE"
             why="matching branch"
           else
@@ -127,10 +133,10 @@ jobs:
             why="no branch named '${CANDIDATE}' in ${APP_REPO}; using the application trunk"
           fi
 
-          if ! gh api "repos/${APP_REPO}/branches/${ref}" >/dev/null 2>&1; then
-            echo "::error::${APP_REPO} has no branch '${ref}'. Set the APP_REF repository" \
-                 "variable to the application branch this platform branch targets." \
-                 "Its default branch is '${default_branch}'."
+          if ! has_branch "$ref"; then
+            echo "::error::${APP_REPO} has no branch '${ref}' — renamed or deleted?" \
+                 "Set the APP_REF repository variable to the application branch this" \
+                 "platform branch targets. Its default branch is '${default_branch}'."
             exit 1
           fi
 

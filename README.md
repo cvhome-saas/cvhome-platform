@@ -225,24 +225,25 @@ The drift check picks the application branch like this:
 
 | this repo | compared against | why |
 |---|---|---|
-| `main` | `cvhome@develop` | trunk maps to trunk |
-| `develop` | `cvhome@develop` | matching branch |
+| `main` | `cvhome@main` | trunk maps to trunk |
 | `feat/add-search` | `cvhome@feat/add-search` | matching branch |
-| `feat/tighten-sg` | `cvhome@develop` | no counterpart branch |
+| `feat/tighten-sg` | `cvhome@main` | no counterpart branch |
 
-**The two repositories do not share a trunk name.** This repo's trunk is `main`; the
-application's living trunk is `develop`. Its `main` is well behind — it still carries
-`control-plane` and `seller-ui`, the names this platform exists to replace — so matching
-purely on branch name would compare current infrastructure against a stale application
-and fail forever.
+Both repositories trunk on `main` — the application renamed `develop` to `main`, so
+trunk maps to trunk by name.
 
 Off-trunk, the same branch name wins when it exists: a new service and the catalog entry
 describing it are one change split across two repositories, normally developed under one
 name. Everything else falls back to the application trunk, which is the common case,
 since most platform work touches no service at all.
 
-Set the `APP_REF` repository variable to move the target. When the application merges
-`develop` into `main`, that is a one-line change with no edit to the workflow.
+Set the `APP_REF` repository variable to move the target if the application's trunk ever
+moves again — a variable, not an edit to the workflow.
+
+A branch is only accepted when the GitHub API echoes back the name asked for. GitHub
+keeps a permanent redirect from a renamed branch's old name, so a plain existence check
+answers 200 for a branch that is gone, while the checkout's `git fetch` — which has no
+such redirect — fails. That is precisely how the `develop` rename broke this job.
 
 `cvhome` is public, so this needs **no secret and no login**. Actions injects
 `github.token` into every run and it can read any public repository, which is also why
