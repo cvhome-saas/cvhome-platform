@@ -34,6 +34,12 @@ variable "hosted_zone_id" {
   type = string
 }
 
+variable "cdn_certificate_arn" {
+  description = "us-east-1 ACM certificate for the CDN's custom domain. Null serves the CloudFront default domain instead."
+  type        = string
+  default     = null
+}
+
 variable "core_namespace" {
   description = "The environment's core Cloud Map namespace, where the shared otel-collector lives."
   type        = string
