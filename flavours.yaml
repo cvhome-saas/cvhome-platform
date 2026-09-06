@@ -7,6 +7,12 @@
 #
 # `sizes` is the right-sizing table. Services name a size in services.yaml rather than
 # carrying numbers, so changing what "small" means moves every small service at once.
+#
+# Floor for a Spring service: 1024 MB. The buildpack's memory calculator reserves
+# ~680 MB of fixed regions for these services before any heap (240 MB code cache,
+# ~170 MB metaspace for ~28k classes, 250 x 1 MB thread stacks), so a 512 MB task
+# cannot start a JVM at all: billing exited with "fixed memory regions require
+# 680550K which is greater than 558560K available". Only the Node UIs fit in 512.
 # The legacy stack gave all 15 services an identical 512/1024, which is the single
 # largest easy cost win — and because pod services are billed once per pod, the saving
 # multiplies by pod count.
@@ -16,7 +22,7 @@ dev:
   sizes:
     gateway: { cpu: 512, memory: 1024 }
     medium:  { cpu: 512, memory: 1024 }
-    small:   { cpu: 256, memory: 512 }
+    small:   { cpu: 256, memory: 1024 }
     ui:      { cpu: 256, memory: 512 }
   desired_count: 1
   # No autoscaling below staging: one task, the cheapest thing that runs.
@@ -67,7 +73,7 @@ staging:
   sizes:
     gateway: { cpu: 512, memory: 1024 }
     medium:  { cpu: 512, memory: 1024 }
-    small:   { cpu: 256, memory: 512 }
+    small:   { cpu: 256, memory: 1024 }
     ui:      { cpu: 512, memory: 1024 }
   desired_count: 1
   # Autoscaling on, cheaply — enough to prove the policy works before prod relies on it.
@@ -197,9 +203,9 @@ prod:
 ephemeral:
   description: "Throwaway. Spun up for a branch or a demo, destroyed without ceremony."
   sizes:
-    gateway: { cpu: 256, memory: 512 }
-    medium:  { cpu: 256, memory: 512 }
-    small:   { cpu: 256, memory: 512 }
+    gateway: { cpu: 256, memory: 1024 }
+    medium:  { cpu: 256, memory: 1024 }
+    small:   { cpu: 256, memory: 1024 }
     ui:      { cpu: 256, memory: 512 }
   desired_count: 1
   # Throwaway environments do not autoscale; they are destroyed instead.

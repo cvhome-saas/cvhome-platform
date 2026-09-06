@@ -112,9 +112,16 @@ resource "aws_ecs_task_definition" "this" {
 
   container_definitions = jsonencode([
     {
-      name        = var.name
-      image       = var.image
-      essential   = true
+      name      = var.name
+      image     = var.image
+      essential = true
+      # A container-level hard limit equal to the task's. Without it the container's
+      # cgroup carries no limit of its own and the JVM's memory calculator reads the
+      # host VM's total instead: the same 512 MB task sized its heap at 880 MB on one
+      # launch and 2.7 GB on another, and failed to start on a third. With the limit
+      # the calculation is the task size, every time, and an overrun is a container
+      # OOM kill rather than a silent tenancy on memory the task was never given.
+      memory      = var.memory
       environment = var.environment
       secrets     = var.secrets
 
