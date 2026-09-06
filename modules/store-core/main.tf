@@ -41,17 +41,22 @@ locals {
     { name = "SPRING_CLOUD_ECS_DISCOVERY_NAMESPACE_ID", value = aws_service_discovery_private_dns_namespace.this.id },
   ]
 
-  # How each service addresses the OTHER ALB-fronted services: over TLS at the edge on
-  # 443, whatever container port they actually listen on. Generated from the catalog so
-  # a renamed service cannot leave a stale entry behind.
+  # How each service addresses the ALB-fronted services, itself included: over TLS at
+  # the edge on 443, whatever container port they actually listen on. Generated from
+  # the catalog so a renamed service cannot leave a stale entry behind.
   #
-  # Keyed by service and excluding that service's own entry, because the entry is read
-  # by two different things. common-config.yml derives server.port from
-  # com.asrevo.cvhome.services.<own name>.port, so writing 443 there tells the service
-  # to bind a privileged port, which fails with EACCES under the non-root buildpack
-  # user and the task never starts. A service needs the edge address of its peers and
-  # never of itself. The legacy env blocks observed the same rule by hand:
-  # store_core_gateway_env set spg and uaa, uaa_env set none, and neither wrote its own.
+  # A service's OWN entry is included on purpose, and SERVER_PORT below is what makes
+  # that safe. common-config.yml derives server.port from
+  # com.asrevo.cvhome.services.<own name>.port, so writing 443 there alone would tell
+  # the service to bind a privileged port, which fails with EACCES under the non-root
+  # buildpack user. An earlier version of this block excluded the service's own entry
+  # for exactly that reason — and uaa then pinned its OAuth2 issuer to that entry
+  # (ServiceDomainIssuerPin reads services.uaa), advertising http://uaa.<domain>:8001
+  # while every resource server trusts https://uaa.<domain>. Every service-to-service
+  # token was rejected with "Unsupported issuer" and a 401. The registry entry must be
+  # the edge address for everyone, including the service it names; the bind port is
+  # SERVER_PORT, which as an OS environment variable outranks server.port in any
+  # config file.
   #
   # The hyphen is load-bearing and must NOT be converted to an underscore.
   # ServiceDomainProperties is Map<String, ServiceDomain>, so these names are map KEYS.
@@ -63,13 +68,19 @@ locals {
   #
   # The wrong form binds nothing and reports no error: the service keeps the http/8000
   # defaults from common-config.yml and builds http:// URLs behind an https:// edge.
-  edge_scheme_env = {
-    for name, _ in var.services : name => flatten([
-      for peer, peer_svc in var.services : [
-        { name = "COM_ASREVO_CVHOME_SERVICES_${upper(peer)}_SCHEMA", value = "https" },
-        { name = "COM_ASREVO_CVHOME_SERVICES_${upper(peer)}_PORT", value = "443" },
-      ] if try(peer_svc.edge.lb, "") == "alb" && peer != name
-    ])
+  edge_scheme_env = flatten([
+    for peer, peer_svc in var.services : [
+      { name = "COM_ASREVO_CVHOME_SERVICES_${upper(peer)}_SCHEMA", value = "https" },
+      { name = "COM_ASREVO_CVHOME_SERVICES_${upper(peer)}_PORT", value = "443" },
+    ] if try(peer_svc.edge.lb, "") == "alb"
+  ])
+
+  # The port a Spring service binds, stated explicitly so it no longer rides on the
+  # service's own registry entry (see edge_scheme_env). Keyed by service.
+  server_port_env = {
+    for name, svc in var.services : name => [
+      { name = "SERVER_PORT", value = tostring(svc.port) },
+    ]
   }
 
   # spg lives in the pod layer but core services address it over the edge.
@@ -146,7 +157,7 @@ locals {
 
       environment = concat(
         svc.runtime == "spring" ? concat(local.common_spring_env, local.otel_spring_env) : [],
-        svc.runtime == "spring" ? local.edge_scheme_env[name] : [],
+        svc.runtime == "spring" ? concat(local.edge_scheme_env, local.server_port_env[name]) : [],
         svc.runtime == "spring" ? local.spg_env : [],
         svc.runtime == "node" ? concat(local.node_env, [{ name = "OTEL_SERVICE_NAME", value = name }]) : [],
         try(svc.database, false) ? local.database_env : [],
