@@ -141,6 +141,86 @@ Resources:
         PasswordLength: 24
         ExcludePunctuation: true
 
+  # The SSO material nobody types: uaa's four client secrets, the two remember-me
+  # keys, and the two keys that wrap each authorization server's signing keys at
+  # rest. One secret, many keys, so services.yaml binds them by json key like the
+  # others. GenerateSecretString mints exactly one value per secret, so a Lambda
+  # fills this one in: it writes on Create only, and never rotates on a stack update.
+  SsoSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "/${ProjectId}/${EnvName}/sso"
+      Description: Generated OAuth2 client secrets and key material for uaa and cua
+      SecretString: "{}"
+
+  SsoSecretsFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: write-sso-secret
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:PutSecretValue
+                Resource: !Ref SsoSecret
+
+  SsoSecretsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 30
+      Role: !GetAtt SsoSecretsFunctionRole.Arn
+      Code:
+        ZipFile: |
+          import base64, json, secrets
+          import boto3
+          import cfnresponse
+
+          # Client secrets and cookie keys: 43 URL-safe characters, which is what a
+          # client_secret_basic header and a remember-me HMAC are happy with. Crypto
+          # keys: 32 random bytes, standard base64, because the application's
+          # EnvironmentVariableKeyProvider base64-decodes COM_ASREVO_CVHOME_CRYPTO_KEY
+          # into an AES-256 key.
+          def handler(event, context):
+              try:
+                  if event["RequestType"] != "Create":
+                      # Never regenerate: every service already holds these, and uaa's
+                      # database holds the client secrets. Rotation is a deliberate act.
+                      return cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, event["PhysicalResourceId"])
+                  value = {
+                      "UAA_ADMIN_SDK_SECRET": secrets.token_urlsafe(32),
+                      "UAA_STORE_POD_SECRET": secrets.token_urlsafe(32),
+                      "UAA_STORE_CORE_SECRET": secrets.token_urlsafe(32),
+                      "UAA_WEB_APP_SECRET": secrets.token_urlsafe(32),
+                      "UAA_REMEMBER_ME_KEY": secrets.token_urlsafe(32),
+                      "CUA_REMEMBER_ME_KEY": secrets.token_urlsafe(32),
+                      "UAA_CRYPTO_KEY": base64.b64encode(secrets.token_bytes(32)).decode(),
+                      "CUA_CRYPTO_KEY": base64.b64encode(secrets.token_bytes(32)).decode(),
+                  }
+                  boto3.client("secretsmanager").put_secret_value(
+                      SecretId=event["ResourceProperties"]["SecretId"],
+                      SecretString=json.dumps(value),
+                  )
+                  return cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, "sso-secret-value")
+              except Exception as exc:
+                  return cfnresponse.send(event, context, cfnresponse.FAILED, {"Error": str(exc)})
+
+  SsoSecretValue:
+    Type: Custom::SsoSecretValue
+    Properties:
+      ServiceToken: !GetAtt SsoSecretsFunction.Arn
+      SecretId: !Ref SsoSecret
+
   # ==========================================================================
   # Pod identifiers
   # ==========================================================================
@@ -935,7 +1015,7 @@ Resources:
 
   StartPipeline:
     Type: Custom::StartPipeline
-    DependsOn: [ConfigParameter, StripeSecret, UaaSecret]
+    DependsOn: [ConfigParameter, StripeSecret, UaaSecret, SsoSecretValue]
     Properties:
       ServiceToken: !GetAtt PipelineStarterFunction.Arn
 

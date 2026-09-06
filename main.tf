@@ -239,6 +239,7 @@ module "store_core" {
 
   pods             = local.pod_summaries
   test_stores      = var.test_stores
+  uaa_seed_on_boot = var.uaa_seed_on_boot
   postgres_version = var.postgres_version
   compute_enabled  = !var.hibernated
 }

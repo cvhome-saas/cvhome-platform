@@ -120,6 +120,17 @@ variable "test_stores" {
   default     = false
 }
 
+variable "uaa_seed_on_boot" {
+  description = <<-EOT
+    Have uaa write the generated client secrets and admin password into its database on
+    every start. A fresh environment needs this once, or no service can authenticate;
+    left on, an operator's password change reverts at the next restart. Keep it on in
+    dev; turn it off in a long-lived environment after its first successful apply.
+  EOT
+  type        = bool
+  default     = true
+}
+
 variable "vpc_cidr_block" {
   type    = string
   default = "10.0.0.0/16"

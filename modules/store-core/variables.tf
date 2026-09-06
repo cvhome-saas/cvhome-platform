@@ -122,3 +122,14 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "uaa_seed_on_boot" {
+  description = <<-EOT
+    Have uaa write the client secrets and admin password from its environment into its
+    database on every start. A fresh environment needs this once, or the secrets the
+    bootstrap generated never reach the rows the SQL seed created and no service can
+    authenticate. Left on, an operator's password change reverts at the next restart,
+    so turn it off after the first successful apply of a long-lived environment.
+  EOT
+  type        = bool
+}
