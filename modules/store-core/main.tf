@@ -104,6 +104,11 @@ locals {
     { name = "SPRING_DATASOURCE_HOST", value = aws_db_instance.this.address },
     { name = "SPRING_DATASOURCE_PORT", value = tostring(aws_db_instance.this.port) },
     { name = "SPRING_DATASOURCE_USERNAME", value = aws_db_instance.this.username },
+    # Sized by the flavour to what the instance class can hold across every service in
+    # the layer, with a rolling deploy's brief doubling included. Hikari's default of 10
+    # exhausted a t4g.micro mid-deploy and tasks died on "remaining connection slots
+    # are reserved" before they could pass a health check.
+    { name = "SPRING_DATASOURCE_HIKARI_MAXIMUM-POOL-SIZE", value = tostring(var.flavour.rds.db_pool_size) },
   ]
 
   database_secret = [

@@ -49,6 +49,10 @@ dev:
   nat_gateway: false
   rds:
     instance_class: db.t4g.micro
+    # Hikari maximum-pool-size per Spring task. Postgres on a t4g.micro allows about
+    # 110 connections and a t4g.small about 220; a rolling deploy briefly doubles every
+    # service, and at Hikari's default of 10 the nine pod services alone asked for 180.
+    db_pool_size: 4
     allocated_storage: 20
     max_allocated_storage: 0
     backup_retention_days: 0
@@ -115,6 +119,10 @@ staging:
   nat_gateway: false
   rds:
     instance_class: db.t4g.small
+    # Hikari maximum-pool-size per Spring task. Postgres on a t4g.micro allows about
+    # 110 connections and a t4g.small about 220; a rolling deploy briefly doubles every
+    # service, and at Hikari's default of 10 the nine pod services alone asked for 180.
+    db_pool_size: 6
     allocated_storage: 20
     max_allocated_storage: 100
     backup_retention_days: 1
@@ -173,6 +181,10 @@ prod:
   nat_gateway: true
   rds:
     instance_class: db.t4g.small
+    # Hikari maximum-pool-size per Spring task. Postgres on a t4g.micro allows about
+    # 110 connections and a t4g.small about 220; a rolling deploy briefly doubles every
+    # service, and at Hikari's default of 10 the nine pod services alone asked for 180.
+    db_pool_size: 6
     allocated_storage: 50
     max_allocated_storage: 500
     backup_retention_days: 7
@@ -219,6 +231,10 @@ ephemeral:
   nat_gateway: false
   rds:
     instance_class: db.t4g.micro
+    # Hikari maximum-pool-size per Spring task. Postgres on a t4g.micro allows about
+    # 110 connections and a t4g.small about 220; a rolling deploy briefly doubles every
+    # service, and at Hikari's default of 10 the nine pod services alone asked for 180.
+    db_pool_size: 4
     allocated_storage: 20
     max_allocated_storage: 0
     backup_retention_days: 0
