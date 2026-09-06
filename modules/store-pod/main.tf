@@ -30,7 +30,10 @@ locals {
 
   # No endpoint when no collector is deployed — otherwise dev pods retry gRPC exports
   # to a service that does not exist, forever.
-  otel_spring_env = var.flavour.monitoring ? [{ name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "${local.otlp_endpoint}:4318" }] : []
+  otel_spring_env = var.flavour.monitoring ? [
+    { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "${local.otlp_endpoint}:4318" },
+    { name = "MANAGEMENT_OTLP_METRICS_EXPORT_URL", value = "${local.otlp_endpoint}:4318/v1/metrics" },
+  ] : []
   otel_grpc_env = var.flavour.monitoring ? [
     { name = "OTEL_EXPORTER_OTLP_PROTOCOL", value = "grpc" },
     { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "${local.otlp_endpoint}:4317" },
@@ -51,6 +54,12 @@ locals {
   common_spring_env = concat([
     { name = "SPRING_PROFILES_ACTIVE", value = local.profiles },
     { name = "OTEL_SDK_DISABLED", value = tostring(!var.flavour.monitoring) },
+    # OTEL_SDK_DISABLED only silences the OpenTelemetry SDK (traces, logs). Spring Boot's
+    # spring-boot-starter-opentelemetry also ships Micrometer's OtlpMeterRegistry, which
+    # has its own switch, defaults to enabled, and defaults its URL to
+    # http://localhost:4318/v1/metrics. Under dev that produced a "Failed to publish
+    # metrics to OTLP receiver ... Connection refused" warning every minute per task.
+    { name = "MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED", value = tostring(var.flavour.monitoring) },
     { name = "COM_ASREVO_CVHOME_APP_DOMAIN", value = var.domain },
     { name = "COM_ASREVO_CVHOME_POD_DOMAIN", value = local.pod_fqdn },
     { name = "COM_ASREVO_CVHOME_SERVICES_STORE-CORE-GATEWAY_SCHEMA", value = "https" },
