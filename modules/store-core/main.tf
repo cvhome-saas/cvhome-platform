@@ -139,6 +139,24 @@ locals {
   # The environment variable is Spring's own name for
   # spring.security.oauth2.client.registration.s2s.client-secret, and as an OS
   # variable it outranks the value each application.yml ships with.
+  # The layer's crypto key: what the secret-crypto provider wraps stored secrets with
+  # (signing keys in uaa and cua, provider credentials in billing and payment). Bound
+  # to every Spring service rather than to the ones known to encrypt today, because
+  # the provider is on every classpath and falls back to a RANDOM key per boot when
+  # none is configured: a service that starts encrypting quietly loses everything it
+  # stored at its next restart. The provider type is pinned to ENV so the key wins
+  # over any STATIC test key a profile ships with.
+  crypto_secret = [
+    {
+      name      = "COM_ASREVO_CVHOME_CRYPTO_KEY"
+      valueFrom = "${local.secret_arns.sso}:CORE_CRYPTO_KEY::"
+    },
+  ]
+
+  crypto_env = [
+    { name = "COM_ASREVO_CVHOME_CRYPTO_LOCAL_KEY-PROVIDER-TYPE", value = "ENV" },
+  ]
+
   s2s_secret = [
     {
       name      = "SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_S2S_CLIENT_SECRET"
@@ -190,6 +208,7 @@ locals {
         svc.runtime == "spring" ? concat(local.common_spring_env, local.otel_spring_env) : [],
         svc.runtime == "spring" ? concat(local.edge_scheme_env, local.server_port_env[name]) : [],
         svc.runtime == "spring" ? local.spg_env : [],
+        svc.runtime == "spring" ? local.crypto_env : [],
         name == "uaa" ? local.uaa_seed_env : [],
         svc.runtime == "node" ? concat(local.node_env, [{ name = "OTEL_SERVICE_NAME", value = name }]) : [],
         try(svc.database, false) ? local.database_env : [],
@@ -199,7 +218,7 @@ locals {
 
       secrets = concat(
         try(svc.database, false) ? local.database_secret : [],
-        svc.runtime == "spring" ? local.s2s_secret : [],
+        svc.runtime == "spring" ? concat(local.s2s_secret, local.crypto_secret) : [],
         [
           for env_name, ref in try(svc.secrets, {}) : {
             name      = env_name

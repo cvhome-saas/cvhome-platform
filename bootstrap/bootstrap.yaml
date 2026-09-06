@@ -142,10 +142,14 @@ Resources:
         ExcludePunctuation: true
 
   # The SSO material nobody types: uaa's four client secrets, the two remember-me
-  # keys, and the two keys that wrap each authorization server's signing keys at
-  # rest. One secret, many keys, so services.yaml binds them by json key like the
-  # others. GenerateSecretString mints exactly one value per secret, so a Lambda
-  # fills this one in: it writes on Create only, and never rotates on a stack update.
+  # keys, and one crypto key per layer that wraps every value the secret-crypto
+  # provider stores at rest (uaa's and cua's signing keys, billing's and payment's
+  # provider credentials). One secret, many keys, so services.yaml binds them by
+  # json key like the others. GenerateSecretString mints exactly one value per
+  # secret, so a Lambda fills this one in. It never rotates: on Create it writes
+  # every key, on Update it adds only the keys that are missing, so a key added
+  # to the template later reaches an existing environment without touching the
+  # values every service and uaa's database already hold.
   SsoSecret:
     Type: AWS::SecretsManager::Secret
     Properties:
@@ -170,7 +174,9 @@ Resources:
             Version: "2012-10-17"
             Statement:
               - Effect: Allow
-                Action: secretsmanager:PutSecretValue
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:PutSecretValue
                 Resource: !Ref SsoSecret
 
   SsoSecretsFunction:
@@ -191,27 +197,38 @@ Resources:
           # keys: 32 random bytes, standard base64, because the application's
           # EnvironmentVariableKeyProvider base64-decodes COM_ASREVO_CVHOME_CRYPTO_KEY
           # into an AES-256 key.
+          GENERATORS = {
+              "UAA_ADMIN_SDK_SECRET": lambda: secrets.token_urlsafe(32),
+              "UAA_STORE_POD_SECRET": lambda: secrets.token_urlsafe(32),
+              "UAA_STORE_CORE_SECRET": lambda: secrets.token_urlsafe(32),
+              "UAA_WEB_APP_SECRET": lambda: secrets.token_urlsafe(32),
+              "UAA_REMEMBER_ME_KEY": lambda: secrets.token_urlsafe(32),
+              "CUA_REMEMBER_ME_KEY": lambda: secrets.token_urlsafe(32),
+              "CORE_CRYPTO_KEY": lambda: base64.b64encode(secrets.token_bytes(32)).decode(),
+              "POD_CRYPTO_KEY": lambda: base64.b64encode(secrets.token_bytes(32)).decode(),
+          }
+
           def handler(event, context):
               try:
-                  if event["RequestType"] != "Create":
-                      # Never regenerate: every service already holds these, and uaa's
-                      # database holds the client secrets. Rotation is a deliberate act.
+                  if event["RequestType"] == "Delete":
                       return cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, event["PhysicalResourceId"])
-                  value = {
-                      "UAA_ADMIN_SDK_SECRET": secrets.token_urlsafe(32),
-                      "UAA_STORE_POD_SECRET": secrets.token_urlsafe(32),
-                      "UAA_STORE_CORE_SECRET": secrets.token_urlsafe(32),
-                      "UAA_WEB_APP_SECRET": secrets.token_urlsafe(32),
-                      "UAA_REMEMBER_ME_KEY": secrets.token_urlsafe(32),
-                      "CUA_REMEMBER_ME_KEY": secrets.token_urlsafe(32),
-                      "UAA_CRYPTO_KEY": base64.b64encode(secrets.token_bytes(32)).decode(),
-                      "CUA_CRYPTO_KEY": base64.b64encode(secrets.token_bytes(32)).decode(),
-                  }
-                  boto3.client("secretsmanager").put_secret_value(
-                      SecretId=event["ResourceProperties"]["SecretId"],
-                      SecretString=json.dumps(value),
-                  )
-                  return cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, "sso-secret-value")
+                  sm = boto3.client("secretsmanager")
+                  secret_id = event["ResourceProperties"]["SecretId"]
+                  current = {}
+                  if event["RequestType"] == "Update":
+                      try:
+                          current = json.loads(sm.get_secret_value(SecretId=secret_id)["SecretString"] or "{}")
+                      except Exception:
+                          current = {}
+                  # Existing values are never regenerated: every service already holds
+                  # them, and uaa's database holds the client secrets. Rotation is a
+                  # deliberate act, not a side effect of a stack update.
+                  missing = {k: g() for k, g in GENERATORS.items() if not current.get(k)}
+                  if missing:
+                      current.update(missing)
+                      sm.put_secret_value(SecretId=secret_id, SecretString=json.dumps(current))
+                  return cfnresponse.send(event, context, cfnresponse.SUCCESS,
+                                          {"Added": ",".join(sorted(missing))}, "sso-secret-value")
               except Exception as exc:
                   return cfnresponse.send(event, context, cfnresponse.FAILED, {"Error": str(exc)})
 
@@ -220,6 +237,9 @@ Resources:
     Properties:
       ServiceToken: !GetAtt SsoSecretsFunction.Arn
       SecretId: !Ref SsoSecret
+      # CloudFormation sends a custom resource an Update only when its properties
+      # change. Listing the keys here is what makes adding one reach a running stack.
+      Keys: UAA_ADMIN_SDK_SECRET,UAA_STORE_POD_SECRET,UAA_STORE_CORE_SECRET,UAA_WEB_APP_SECRET,UAA_REMEMBER_ME_KEY,CUA_REMEMBER_ME_KEY,CORE_CRYPTO_KEY,POD_CRYPTO_KEY
 
   # ==========================================================================
   # Pod identifiers
