@@ -14,7 +14,7 @@ flavour = "dev"
 # Product version this environment runs; changed by the orchestrator's promotion PR
 # (cvhome-saas/orchestrator docs/release-plan.md). `latest` only until the first
 # tagged release (2.0.0).
-image_tag = "latest"
+image_tag = "2.0.0"
 
 # Cheapest thing that runs the whole product.
 test_stores = true
