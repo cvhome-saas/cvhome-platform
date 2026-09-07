@@ -18,3 +18,4 @@ override.tf.json
 
 .DS_Store
 .idea/
+.claude/worktrees/
