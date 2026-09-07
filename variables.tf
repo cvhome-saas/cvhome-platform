@@ -64,7 +64,11 @@ variable "hosted_zone_id" {
 }
 
 variable "image_tag" {
-  description = "Container image tag to deploy. Read from SSM when not set here."
+  description = <<-EOT
+    Product version this environment runs (the cvhome image tag, X.Y.Z). Set in
+    envs/<env>.tfvars by the promotion PR; read from SSM when not set here. Protected
+    flavours refuse "latest".
+  EOT
   type        = string
   default     = null
 }

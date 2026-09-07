@@ -21,14 +21,14 @@ a template that does not pass `cfn-lint`.
 One click, then wait.
 
 1. The stack asks for a project id, an environment name, a flavour, a hosted zone, a
-   pod count and a Stripe key.
+   pod count, a Stripe key and the product version to deploy.
 2. It writes the environment's config to SSM, creates the state bucket, a scoped deploy
    role and three CodeBuild projects — then **starts the pipeline**.
 3. The pipeline runs itself:
 
    ```
    1-prereq   ECR repositories + ACM certificate, from services.yaml
-   2-images   ./gradlew bootBuildImage --publishImage   (15 images)
+   2-images   ./gradlew bootBuildImage --publishImage -Pversion=$IMAGE_TAG   (15 images)
    3-apply    terraform apply                            (everything else)
    ```
 
@@ -211,7 +211,7 @@ modules/network/           VPC, subnets, NAT (prod only)
 modules/store-core/        cluster, ALB, RDS, the 6 core services
 modules/store-pod/         per pod: cluster, NLB, RDS, CDN, the 9 pod services
 envs/*.tfvars              human choices per environment
-scripts/                   catalog drift check, Stripe webhook registration
+scripts/                   catalog drift and release pin checks, Stripe webhook registration
 main.tf …                  the environment root
 ```
 
@@ -225,16 +225,50 @@ env/<env>/terraform.tfstate
 
 Both use S3 native locking (`use_lockfile`, Terraform ≥ 1.10). No DynamoDB table.
 
+## Versions and promotion
+
+This repository has no version of its own. The orchestrator tags it in lockstep with
+`cvhome` — `v2.0.0` here is the platform that was validated with product `2.0.0`
+there — and the tag is the only place the number lives; nothing in the tree is bumped.
+The whole scheme, the release button and the migration order are in
+[`cvhome-saas/orchestrator` `docs/release-plan.md`](https://github.com/cvhome-saas/orchestrator/blob/main/docs/release-plan.md).
+
+What an environment *runs* is a separate question, answered by one line:
+
+```hcl
+# envs/<env>.tfvars
+image_tag = "2.0.0"      # the product version this environment deploys
+```
+
+| Action | What it is |
+|---|---|
+| Promote | a PR changing that line to the new version — opened by the orchestrator for `dev` and auto-merged on green; opened by `Promote` (or by hand) and merged by a person for `staging` and `prod` |
+| Roll back | the same PR with the previous version |
+| Deploy | `3-apply` runs `terraform apply` with the tfvars; the task definitions reference `<registry>/<image>:<image_tag>` |
+
+`image_tag` is the cvhome image tag, which is the product version: the on-tag workflow
+in `cvhome` publishes `X.Y.Z`, `X.Y` and `latest` for every release. `2-images` exists
+for environments that build from a branch; it passes `-Pversion=$IMAGE_TAG`, so a
+release build names its images after the version, and a branch build (`IMAGE_TAG` =
+`latest`, no `-Pversion`) stays `0.0.0-SNAPSHOT` and can only ever publish `latest` —
+it cannot overwrite a released tag.
+
+`latest` is tolerated in `dev` and `staging` until the first tagged release, and
+refused for a protected flavour twice: at plan time by a precondition in `main.tf`,
+and on every `v*` tag by the `release-guard` job (`scripts/check-release-pins.py`).
+Once `prod.tfvars` pins a version, `latest` never reaches it again.
+
 ## Working on it
 
 ```bash
 terraform fmt -recursive
 terraform init -backend=false && terraform validate     # each root and module
 python3 scripts/check-catalog-drift.py
+python3 scripts/check-release-pins.py                   # what release-guard runs on a tag
 cfn-lint bootstrap/bootstrap.yaml
 ```
 
-CI runs all of these on every push and pull request
+CI runs all of these on every push, pull request and `v*` tag
 (`.github/workflows/terraform-validate.yml`). Only the plan job assumes an AWS role,
 via OIDC; the rest need no cloud credentials.
 
@@ -245,6 +279,7 @@ The drift check picks the application branch like this:
 | `main` | `cvhome@main` | trunk maps to trunk |
 | `feat/add-search` | `cvhome@feat/add-search` | matching branch |
 | `feat/tighten-sg` | `cvhome@main` | no counterpart branch |
+| tag `v2.1.0` | `cvhome@v2.1.0` | the product ring is tagged in lockstep |
 
 Both repositories trunk on `main` — the application renamed `develop` to `main`, so
 trunk maps to trunk by name.
@@ -298,8 +333,11 @@ Without this, every environment claimed the same records — apex, `www`, `uaa`,
 flavours.yaml  <  SSM (/{project}/{env}/config)  <  envs/<env>.tfvars
 ```
 
-SSM holds what the bootstrap generated — hosted zone, pod ids, image tag. `tfvars` holds
-what a human chose, and wins. Someone who never touches git still gets a working
+SSM holds what the bootstrap generated — hosted zone, pod ids, and the product version
+typed into the stack. `tfvars` holds what a human chose, and wins: once the promotion PR
+has landed, `image_tag` in tfvars is the version the environment runs, whatever the
+stack was launched with. There is no `latest` fallback below either; a missing
+`image_tag` is an error. Someone who never touches git still gets a working
 environment; a team that does gets reviewable diffs.
 
 ## Conventions

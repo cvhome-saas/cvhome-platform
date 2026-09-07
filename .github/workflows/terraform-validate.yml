@@ -6,6 +6,10 @@ name: validate
 on:
   push:
     branches: [main]
+    # A release tag: the orchestrator tags this repository and cvhome together
+    # (docs/release-plan.md there), so the catalog is compared against the
+    # application at the same tag and release-guard checks the pins.
+    tags: ["v*"]
   pull_request:
 
 permissions:
@@ -80,7 +84,10 @@ jobs:
       #
       # Set the APP_REF repository variable to move the target if the application's
       # trunk ever moves again — a variable, not an edit here.
-      - name: Resolve the application branch
+      #
+      # On a release tag vX.Y.Z there is no choice to make: the orchestrator tags both
+      # repositories with the same version, so the pair to check is the two tags.
+      - name: Resolve the application ref
         id: app
         env:
           # cvhome is public, so there is no secret to configure and nothing to log in
@@ -99,6 +106,7 @@ jobs:
           # On a pull request, ref_name is the merge ref (123/merge), so the source
           # branch has to come from head_ref instead.
           CANDIDATE: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
         run: |
           set -euo pipefail
 
@@ -121,6 +129,29 @@ jobs:
           has_branch() {
             [ "$(gh api "repos/${APP_REPO}/branches/$1" --jq .name 2>/dev/null)" = "$1" ]
           }
+          # Tags have no rename redirect, but the same shape keeps the check honest:
+          # the ref must come back as exactly refs/tags/<name>, not a prefix match.
+          has_tag() {
+            [ "$(gh api "repos/${APP_REPO}/git/ref/tags/$1" --jq .ref 2>/dev/null)" = "refs/tags/$1" ]
+          }
+
+          if [ "$REF_TYPE" = "tag" ]; then
+            case "$CANDIDATE" in
+              v*) ;;
+              *) echo "::error::Tag '${CANDIDATE}' is not a release tag (vX.Y.Z)."; exit 1 ;;
+            esac
+            if ! has_tag "$CANDIDATE"; then
+              echo "::error::${APP_REPO} has no tag '${CANDIDATE}'. The product ring is tagged in" \
+                   "lockstep by cvhome-saas/orchestrator; a platform tag without its application" \
+                   "tag is not a release."
+              exit 1
+            fi
+            echo "ref=${CANDIDATE}" >> "$GITHUB_OUTPUT"
+            echo "repo=${APP_REPO}" >> "$GITHUB_OUTPUT"
+            echo "Comparing against ${APP_REPO}@${CANDIDATE} (release tag pair)"
+            echo "Catalog compared against \`${APP_REPO}@${CANDIDATE}\` — release tag pair." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
 
           if [ "$CANDIDATE" = "$OUR_TRUNK" ]; then
             ref="$APP_TRUNK"
@@ -153,6 +184,18 @@ jobs:
           # No token: checkout defaults to github.token, which reads public repos.
 
       - run: python3 scripts/check-catalog-drift.py --app-repo .app
+
+  # A tag of this repository says "the platform at this commit deploys product version
+  # X.Y.Z". A protected environment whose tfvars still says latest would deploy
+  # whatever the last branch build pushed instead, so the tag is refused. The same
+  # rule is a plan-time precondition in main.tf; this fails before anything applies.
+  release-guard:
+    name: release guard
+    runs-on: ubuntu-latest
+    if: github.ref_type == 'tag'
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/check-release-pins.py
 
   cloudformation:
     name: cloudformation
