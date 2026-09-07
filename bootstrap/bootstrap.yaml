@@ -220,6 +220,7 @@ Resources:
               "UAA_STORE_POD_SECRET": lambda: secrets.token_urlsafe(32),
               "UAA_STORE_CORE_SECRET": lambda: secrets.token_urlsafe(32),
               "UAA_WEB_APP_SECRET": lambda: secrets.token_urlsafe(32),
+              "UAA_IMPERSONATION_SECRET": lambda: secrets.token_urlsafe(32),
               "UAA_REMEMBER_ME_KEY": lambda: secrets.token_urlsafe(32),
               "CUA_REMEMBER_ME_KEY": lambda: secrets.token_urlsafe(32),
               "CORE_CRYPTO_KEY": lambda: base64.b64encode(secrets.token_bytes(32)).decode(),
@@ -257,7 +258,7 @@ Resources:
       SecretId: !Ref SsoSecret
       # CloudFormation sends a custom resource an Update only when its properties
       # change. Listing the keys here is what makes adding one reach a running stack.
-      Keys: UAA_ADMIN_SDK_SECRET,UAA_STORE_POD_SECRET,UAA_STORE_CORE_SECRET,UAA_WEB_APP_SECRET,UAA_REMEMBER_ME_KEY,CUA_REMEMBER_ME_KEY,CORE_CRYPTO_KEY,POD_CRYPTO_KEY
+      Keys: UAA_ADMIN_SDK_SECRET,UAA_STORE_POD_SECRET,UAA_STORE_CORE_SECRET,UAA_WEB_APP_SECRET,UAA_IMPERSONATION_SECRET,UAA_REMEMBER_ME_KEY,CUA_REMEMBER_ME_KEY,CORE_CRYPTO_KEY,POD_CRYPTO_KEY
 
   # ==========================================================================
   # Pod identifiers

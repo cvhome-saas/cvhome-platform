@@ -68,6 +68,8 @@ core:
     # The gateway's half of uaa's web-app login client.
     secrets:
       UAA_WEB_APP_SECRET: "sso:UAA_WEB_APP_SECRET"
+      # console-impersonation: the gateway's token-exchange client (cvhome#330). uaa verifies it.
+      UAA_IMPERSONATION_SECRET: "sso:UAA_IMPERSONATION_SECRET"
     edge:
       lb: alb
       priority: 100
@@ -91,6 +93,7 @@ core:
       UAA_STORE_POD_SECRET: "sso:UAA_STORE_POD_SECRET"
       UAA_STORE_CORE_SECRET: "sso:UAA_STORE_CORE_SECRET"
       UAA_WEB_APP_SECRET: "sso:UAA_WEB_APP_SECRET"
+      UAA_IMPERSONATION_SECRET: "sso:UAA_IMPERSONATION_SECRET"
       UAA_REMEMBER_ME_KEY: "sso:UAA_REMEMBER_ME_KEY"
     edge:
       lb: alb

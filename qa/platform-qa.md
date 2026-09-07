@@ -147,3 +147,8 @@ Defects that already shipped once in the legacy repos or during this repo's deve
 - `tflint` and `cfn-lint` are skipped by `scripts/verify.sh` when not installed locally; CI still runs
   them, so a lint failure can surface only after the push.
 - `ephemeral` flavour cases (a per-branch environment) are not written yet.
+
+### 03.x The impersonation client secret reaches uaa and the gateway [not verified]
+- Setup: an environment bootstrapped (or stack-updated) with this template; cvhome ≥ 2.0.0
+- Steps: update the stack (the SsoSecretsFunction adds the missing `UAA_IMPERSONATION_SECRET` key without touching existing ones); run the pipeline; in the console as super-admin, act as a merchant
+- Expect: `/{project}/{env}/sso` has the key; uaa and store-core-gateway task definitions bind it; uaa starts (no unresolved `${UAA_IMPERSONATION_SECRET}`); the exchange returns 200 and `auth/me` names the merchant
