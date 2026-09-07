@@ -8,5 +8,10 @@
 env     = "staging"
 flavour = "staging"
 
+# Product version this environment runs; changed by the orchestrator's promotion PR
+# (cvhome-saas/orchestrator docs/release-plan.md). `latest` only until the first
+# tagged release (2.0.0).
+image_tag = "latest"
+
 test_stores = false
 az_count    = 2

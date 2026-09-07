@@ -14,7 +14,7 @@ Metadata:
       - Label: { default: Integrations }
         Parameters: [StripeKey]
       - Label: { default: Source }
-        Parameters: [GithubAccount, PlatformRepo, AppRepo, Branch]
+        Parameters: [GithubAccount, PlatformRepo, AppRepo, Branch, ImageTag]
     ParameterLabels:
       ProjectId: { default: Project id }
       EnvName: { default: Environment name }
@@ -22,6 +22,7 @@ Metadata:
       DomainZoneId: { default: Route53 hosted zone }
       PodCount: { default: Additional store pods }
       StripeKey: { default: Stripe secret key }
+      ImageTag: { default: Product version }
 
 Parameters:
   ProjectId:
@@ -89,9 +90,26 @@ Parameters:
   Branch:
     Type: String
     Default: main
+    Description: >-
+      Branch of both repositories the pipeline builds and applies from. The image
+      build ignores it when ImageTag names a release: it then checks out the
+      application at tag v<ImageTag>.
+
+  ImageTag:
+    Type: String
+    Default: latest
+    AllowedPattern: "^(latest|[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?)$"
+    Description: >-
+      Product version to deploy; see cvhome-saas/orchestrator releases/. Written to
+      the environment's SSM config as image_tag, which envs/<env>.tfvars overrides
+      once the promotion PR has landed. latest is only for the cut-over before the
+      first tagged release (2.0.0) and for ephemeral environments built from a branch.
 
 Conditions:
   HasStripeKey: !Not [!Equals [!Ref StripeKey, ""]]
+  # A release: the image build checks the application out at its tag and Gradle
+  # names the images after it. Anything else is a branch build tagged latest only.
+  ImageTagIsVersion: !Not [!Equals [!Ref ImageTag, latest]]
 
 Resources:
   # ==========================================================================
@@ -322,7 +340,7 @@ Resources:
             "flavour": "${Flavour}",
             "region": "${AWS::Region}",
             "hosted_zone_id": "${DomainZoneId}",
-            "image_tag": "latest",
+            "image_tag": "${ImageTag}",
             "pod_ids": ${PodIdsJson},
             "state_bucket": "${TerraformStateBucket}"
           }
@@ -622,7 +640,7 @@ Resources:
     Type: AWS::CodeBuild::Project
     Properties:
       Name: !Sub "${ProjectId}-${EnvName}-2-images"
-      Description: Build and push all 15 service images
+      Description: Build and push all 15 service images, named after ImageTag
       ServiceRole: !GetAtt BuildRole.Arn
       Artifacts: { Type: NO_ARTIFACTS }
       # Measured on build e5942837: 826s total, of which bootBuildImage is 606s. Inside
@@ -651,6 +669,11 @@ Resources:
         PrivilegedMode: true
         EnvironmentVariables:
           - { Name: PROJECT_ID, Value: !Ref ProjectId }
+          # The version the images are published under. Gradle tags a release
+          # X.Y.Z, X.Y and latest; a branch build (latest) gets no -Pversion, stays
+          # 0.0.0-SNAPSHOT and publishes latest only, so it can never overwrite a
+          # released tag.
+          - { Name: IMAGE_TAG, Value: !Ref ImageTag }
           - Name: REGISTRY
             Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ProjectId}"
           - Name: GRADLE_OPTS
@@ -681,8 +704,18 @@ Resources:
             build:
               commands:
                 - chmod +x gradlew
-                - ./gradlew bootBuildImage --publishImage -x test -x check --no-daemon --parallel --build-cache
-      SourceVersion: !Ref Branch
+                - |
+                  VERSION_FLAG=""
+                  if [ "$IMAGE_TAG" != "latest" ]; then
+                    VERSION_FLAG="-Pversion=$IMAGE_TAG"
+                  fi
+                  echo "Publishing images as ${IMAGE_TAG} from $(git rev-parse --short HEAD 2>/dev/null || echo "$CODEBUILD_RESOLVED_SOURCE_VERSION")"
+                  ./gradlew bootBuildImage --publishImage $VERSION_FLAG -x test -x check --no-daemon --parallel --build-cache
+      # A release builds the application at its tag, so the images named X.Y.Z are
+      # built from the commit that carries vX.Y.Z and nothing else. The chaining
+      # rule starts this project with no overrides, so the project default is what
+      # runs. CodeBuild accepts a tag name here for GitHub sources.
+      SourceVersion: !If [ImageTagIsVersion, !Sub "v${ImageTag}", !Ref Branch]
       TimeoutInMinutes: 120
 
   EnvProject:

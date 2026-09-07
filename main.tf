@@ -59,8 +59,11 @@ locals {
   # certificate; the value it used is echoed back here as a cross-check.
   dns_prefix = coalesce(var.dns_prefix, var.env == "prod" ? "" : var.env)
   app_domain = local.dns_prefix == "" ? data.aws_route53_zone.this.name : "${local.dns_prefix}.${data.aws_route53_zone.this.name}"
-  image_tag  = coalesce(var.image_tag, try(local.ssm.image_tag, "latest"))
-  pod_ids    = coalesce(var.pod_ids, try(local.ssm.pod_ids, []))
+  # No "latest" fallback: an environment deploys the product version named in its
+  # tfvars (or, before the first promotion PR, the one the bootstrap wrote to SSM).
+  # A missing value is an error rather than a silent moving target.
+  image_tag = coalesce(var.image_tag, try(local.ssm.image_tag, null))
+  pod_ids   = coalesce(var.pod_ids, try(local.ssm.pod_ids, []))
 
   # ------------------------------------------------------------------- the flavour
   #
@@ -127,6 +130,14 @@ resource "terraform_data" "guards" {
     precondition {
       condition     = !(var.hibernated && local.flavour.protected)
       error_message = "Flavour '${var.flavour}' is protected, so this environment cannot be hibernated. Hibernation is for dev, staging and ephemeral environments."
+    }
+    # A protected environment runs a released product version, never whatever the
+    # last branch build pushed. Promotion is a PR changing envs/<env>.tfvars image_tag
+    # (docs/release-plan.md in cvhome-saas/orchestrator). Not a variable validation:
+    # dev and staging legitimately run `latest` until the first tagged release.
+    precondition {
+      condition     = !(local.flavour.protected && local.image_tag == "latest")
+      error_message = "Flavour '${var.flavour}' is protected, so image_tag must be a released product version (X.Y.Z), not 'latest'. Set image_tag in envs/${var.env}.tfvars."
     }
     precondition {
       condition     = local.prereq.app_domain == local.app_domain
