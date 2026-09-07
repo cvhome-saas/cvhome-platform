@@ -14,7 +14,10 @@ else
   echo; echo "▷ tflint is not installed — skipped here; CI's lint job still runs it (brew install tflint)."
 fi
 
-step "catalog drift against ../cvhome"  python3 scripts/check-catalog-drift.py --app-repo ../cvhome
+# The app repo sits beside the *primary* checkout; from a worktree under .claude/worktrees/ a plain
+# ../cvhome points nowhere. APP_REPO overrides (the orchestrator sets it when reviewing a branch).
+APP_REPO="${APP_REPO:-$(cd "$(git rev-parse --git-common-dir)/../.." && pwd)/cvhome}"
+step "catalog drift against $APP_REPO"  python3 scripts/check-catalog-drift.py --app-repo "$APP_REPO"
 
 if command -v cfn-lint >/dev/null 2>&1; then
   step "cfn-lint bootstrap"  cfn-lint bootstrap/bootstrap.yaml
