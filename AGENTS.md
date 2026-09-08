@@ -29,6 +29,7 @@ modules/ecs-service/       one ECS service: task def, SG, Cloud Map, IAM, autosc
 modules/network/           VPC, subnets, NAT (prod only)
 modules/store-core/        cluster, ALB, RDS, the 6 core services
 modules/store-pod/         per pod: cluster, NLB, RDS, CDN, the 9 pod services
+modules/dashboard/         one CloudWatch dashboard per environment from the default AWS metrics
 envs/*.tfvars              human choices per environment (image_tag = the product version it runs)
 scripts/                   check-catalog-drift.py, check-release-pins.py, hibernate.sh, wake.sh,
                            register-stripe-webhook.sh, verify.sh + verify.steps.sh

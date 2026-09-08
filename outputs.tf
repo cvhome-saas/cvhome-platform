@@ -51,3 +51,8 @@ output "service_count" {
     pods = length(local.pods)
   }
 }
+
+output "dashboard_url" {
+  description = "The environment's CloudWatch dashboard. Null while hibernated or when the flavour has dashboard: false."
+  value       = one(module.dashboard[*].url)
+}

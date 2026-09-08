@@ -293,3 +293,41 @@ module "store_pod" {
   postgres_version = var.postgres_version
   compute_enabled  = !var.hibernated
 }
+
+# ------------------------------------------------------------------------ dashboard
+
+# One page per environment, from the metrics AWS publishes without being asked. It
+# names the load balancers and services by their ARN suffixes, which do not exist while
+# hibernated, so it goes and comes back with the rest of the hourly things.
+module "dashboard" {
+  source = "./modules/dashboard"
+  count  = local.flavour.dashboard && !var.hibernated ? 1 : 0
+
+  project = var.project
+  env     = var.env
+  region  = var.region
+
+  core = {
+    cluster_name              = module.store_core.cluster_name
+    service_names             = module.store_core.service_names
+    alb_arn_suffix            = module.store_core.alb_arn_suffix
+    target_group_arn_suffixes = module.store_core.target_group_arn_suffixes
+    db_identifier             = module.store_core.db_identifier
+    log_group_names           = module.store_core.log_group_names
+  }
+
+  pods = {
+    for key, pod in module.store_pod : key => {
+      name                          = local.pods[key].name
+      cluster_name                  = pod.cluster_name
+      service_names                 = pod.service_names
+      nlb_arn_suffix                = pod.nlb_arn_suffix
+      nlb_target_group_arn_suffixes = pod.nlb_target_group_arn_suffixes
+      db_identifier                 = pod.db_identifier
+      cdn_distribution_id           = pod.cdn_distribution_id
+      log_group_names               = pod.log_group_names
+    }
+  }
+
+  nat_gateway_id = module.network.nat_gateway_id
+}

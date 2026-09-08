@@ -6,7 +6,7 @@ The path an operator takes to stand up, change, pause and tear down a CVHome env
 - **Scope** — the bootstrap stack, the three CodeBuild stages, promotion by tfvars, hibernate/wake, destroy.
 - **Runs on** — a real AWS account and a Route53 hosted zone; eu-central-1 unless stated. Nothing here
   runs from an agent session (`AGENTS.md` → *Build, run and verify*).
-- **Cases** — 12 (0 verified, 12 not verified)
+- **Cases** — 15 (0 verified, 15 not verified)
 - **Also see** — `../cvhome/qa/lcl-qa.md` for the stack itself, `../cvhome/store-core/*/qa/*-qa.md` for the
   product flows to run once an environment is up; `README.md` here for the commands.
 
@@ -125,6 +125,32 @@ none was recorded against this script, so none is marked verified.
 - Expect: `terraform destroy` finishes without a manual step (the deploy role could delete the roles it
   created; SSM parameters could be deleted); the `env` and `prereq` states are empty; the stack deletes
   cleanly; nothing is left billing except what the operator chose to keep (ECR images, logs).
+
+## 06 — Dashboard
+
+### 06.1 The environment has one dashboard and every widget has data [not verified]
+- Setup: a running `dev` (02.3) that has taken a few minutes of traffic (open the console, load a storefront
+  page, upload one media file so the CDN and RDS have something to show).
+- Steps: `terraform output dashboard_url`; open it in the console signed in to the account.
+- Expect: a dashboard named `<project>-dev`; sections *store-core*, one per pod (`pod-507f1f77` for the
+  default pod) and, only under a flavour with `nat_gateway: true`, *network*; every metric widget draws a
+  line within five minutes (CloudFront within fifteen; its metrics arrive from us-east-1); the *Recent
+  errors* table at the end of each section runs without a query error and lists ERROR lines from that
+  layer's services, or nothing, which is also a pass; no widget shows "Metric not found" or an empty
+  legend.
+
+### 06.2 Hibernate removes the dashboard and wake brings it back under the same name [not verified]
+- Setup: 06.1, then 04.1.
+- Steps: open CloudWatch → Dashboards while hibernated; then 04.2 and reopen.
+- Expect: absent while hibernated (`terraform output dashboard_url` is null); present again after wake
+  under the same name, with the same sections; history for RDS continues across the gap because the
+  identifiers did not change.
+
+### 06.3 `dashboard: false` and a per-env override [not verified]
+- Setup: an `ephemeral` environment, or `dev` with `flavour_overrides = { dashboard = false }` in tfvars.
+- Steps: apply; open CloudWatch → Dashboards.
+- Expect: no dashboard for that environment; `terraform output dashboard_url` is null; nothing else in
+  the plan changed.
 
 ## REG — regression watchlist
 
