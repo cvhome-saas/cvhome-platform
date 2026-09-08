@@ -33,3 +33,30 @@ output "database_endpoint" {
 output "service_names" {
   value = sort(keys(module.service))
 }
+
+# ---------------------------------------------------------------- for the dashboard
+#
+# The identifiers CloudWatch names this layer's default metrics by. Null or empty
+# while hibernated, like the resources themselves.
+
+output "cluster_name" {
+  value = aws_ecs_cluster.this.name
+}
+
+output "alb_arn_suffix" {
+  description = "The LoadBalancer dimension of AWS/ApplicationELB metrics. Null while hibernated."
+  value       = one(aws_lb.this[*].arn_suffix)
+}
+
+output "target_group_arn_suffixes" {
+  description = "The TargetGroup dimension per ALB-fronted service."
+  value       = { for name, tg in aws_lb_target_group.service : name => tg.arn_suffix }
+}
+
+output "db_identifier" {
+  value = aws_db_instance.this.identifier
+}
+
+output "log_group_names" {
+  value = { for name, svc in module.service : name => svc.log_group_name }
+}

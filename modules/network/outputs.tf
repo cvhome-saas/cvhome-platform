@@ -27,3 +27,8 @@ output "assign_public_ip" {
   description = "Tasks in public subnets need a public IP to pull images; private ones must not have one."
   value       = !var.private_tasks
 }
+
+output "nat_gateway_id" {
+  description = "The NAT gateway, when the flavour runs one and compute is up. Null otherwise."
+  value       = one(aws_nat_gateway.this[*].id)
+}

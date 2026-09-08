@@ -141,6 +141,27 @@ flavour_overrides = {
 Overrides merge one level deep into `rds`, `capacity` and `sizes`, so changing one field
 does not mean restating the block.
 
+## Dashboard
+
+Every environment whose flavour says `dashboard: true` (all but `ephemeral`) gets one
+CloudWatch dashboard named `<project>-<env>`; `terraform output dashboard_url` opens it.
+It is built only from the metrics AWS publishes for free the moment a resource exists,
+so it needs no agent, no Container Insights and no collector, and reads the same under
+`monitoring: false`:
+
+| Section | Widgets | Namespace |
+|---|---|---|
+| store-core | CPU and memory per service; ALB requests and errors, target response time (p50/p90/p99), healthy and unhealthy targets, requests per target, connections; RDS CPU, connections, free memory and storage, latency, burst credits; recent errors from the log groups | `AWS/ECS`, `AWS/ApplicationELB`, `AWS/RDS`, Logs Insights |
+| each pod | CPU and memory per service; NLB flows, bytes, resets, healthy and unhealthy spg targets; CDN requests, error rates, bytes; the same RDS widgets; recent errors | `AWS/ECS`, `AWS/NetworkELB`, `AWS/CloudFront`, `AWS/RDS`, Logs Insights |
+| network | NAT bytes, connections, port-allocation errors and dropped packets — only under a flavour that runs a NAT gateway | `AWS/NATGateway` |
+
+Positions are explicit, so an apply never reshuffles the page. The dashboard names the
+load balancers and services by ARN suffix, which do not exist while hibernated, so it is
+destroyed with the rest of the hourly things and recreated under the same name on wake.
+The NLB section has no request count and no status codes: the listeners are TCP
+passthrough to Caddy, and request-level numbers for a pod are Caddy's job. Alarms are
+deliberately not here; they need SLO decisions that live with the load-testing thresholds.
+
 ## Autoscaling
 
 Two levels. The **flavour** sets the environment's shape; the **catalog** overrides it
