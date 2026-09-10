@@ -190,6 +190,22 @@ variable "log_retention_days" {
   default = 14
 }
 
+variable "log_group_class" {
+  description = <<-EOT
+    CloudWatch Logs class of the service's log group. INFREQUENT_ACCESS halves ingestion
+    but serves reads through Logs Insights only: no Live Tail, no GetLogEvents or
+    FilterLogEvents (so no `aws logs tail` and no ECS console log tab), and no metric or
+    subscription filters. The class is fixed when the group is created.
+  EOT
+  type        = string
+  default     = "STANDARD"
+
+  validation {
+    condition     = contains(["STANDARD", "INFREQUENT_ACCESS"], var.log_group_class)
+    error_message = "log_group_class must be STANDARD or INFREQUENT_ACCESS."
+  }
+}
+
 # --- edge ------------------------------------------------------------------------
 
 variable "target_groups" {

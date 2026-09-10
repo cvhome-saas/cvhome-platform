@@ -150,6 +150,12 @@ is a flavour key, so one environment can take it back with `flavour_overrides`.
   of that one service until ECS places its replacement, and ECS does not fall back to
   on-demand when Spot capacity runs short. `capacity = { on_demand_base = 1 }` restores
   the base.
+- **Infrequent Access logs.** `log_class: INFREQUENT_ACCESS` halves log ingestion
+  ($0.25/GB against $0.50 in us-east-1). Read these logs with CloudWatch Logs Insights,
+  as the dashboard's error tables already do. Live Tail, `aws logs tail`,
+  `filter-log-events` and the ECS console's Logs tab do not work on this class, and it
+  takes no metric or subscription filters. The class is fixed when a log group is
+  created: switching it recreates the groups and drops their history.
 
 ## Dashboard
 

@@ -911,7 +911,9 @@
         DNS resolves inside the VPC, so a single environment-level collector costs nothing in complexity and
         removes N tasks.</li>
         <li><strong>Flavour-gated monitoring</strong> — off entirely below staging.</li>
-        <li><strong>Log retention from the flavour</strong>, rather than a hardcoded 14 days everywhere.</li>
+        <li><strong>Log retention from the flavour</strong>, rather than a hardcoded 14 days everywhere —
+        and below prod the <strong>Infrequent Access log class</strong>, which ingests at half the price
+        ($0.25/GB against $0.50 in us-east-1) and is read through Logs Insights only.</li>
         <li><strong>No NAT below prod</strong> — saves the hourly charge and per-GB processing in the two
         environments that run most of the time.</li>
       </ol>

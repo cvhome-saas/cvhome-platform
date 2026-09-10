@@ -313,6 +313,7 @@ module "service" {
   force_new_deployment       = !var.flavour.protected
   health_check_grace_seconds = var.flavour.health_check_grace_seconds
   log_retention_days         = var.flavour.log_retention_days
+  log_group_class            = var.flavour.log_class
 
   target_groups = try(each.value.edge.lb, "") == "alb" ? {
     alb = {
@@ -368,6 +369,7 @@ module "otel_collector" {
   force_new_deployment       = !var.flavour.protected
   health_check_grace_seconds = var.flavour.health_check_grace_seconds
   log_retention_days         = var.flavour.log_retention_days
+  log_group_class            = var.flavour.log_class
 
   tags = merge(var.tags, { Service = "otel-collector" })
 }

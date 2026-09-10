@@ -96,7 +96,9 @@ resource "aws_vpc_security_group_egress_rule" "all" {
 resource "aws_cloudwatch_log_group" "this" {
   name              = local.log_group
   retention_in_days = var.log_retention_days
-  tags              = var.tags
+  # Fixed at creation: changing it replaces the group and drops its history.
+  log_group_class = var.log_group_class
+  tags            = var.tags
 }
 
 # ---------------------------------------------------------------------- task defs

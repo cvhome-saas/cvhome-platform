@@ -50,6 +50,11 @@ dev:
     on_demand_percent: 0
   health_check_grace_seconds: 90
   log_retention_days: 7
+  # CloudWatch Logs class for every service's log group. INFREQUENT_ACCESS ingests at
+  # half the price ($0.25/GB against $0.50 in us-east-1) and is read through Logs Insights
+  # only: no Live Tail, no `aws logs tail`, no ECS console log tab. The class is fixed
+  # when a group is created, so changing it recreates the groups and drops their history.
+  log_class: INFREQUENT_ACCESS
   monitoring: false
   # A CloudWatch dashboard built from the metrics AWS publishes by default (ECS, ALB, NLB,
   # RDS, CloudFront, NAT, the log groups). Independent of `monitoring`, which is the
@@ -129,6 +134,7 @@ staging:
     on_demand_percent: 0
   health_check_grace_seconds: 120
   log_retention_days: 14
+  log_class: INFREQUENT_ACCESS
   monitoring: true
   dashboard: true
   private_tasks: false
@@ -192,6 +198,8 @@ prod:
     on_demand_percent: 50
   health_check_grace_seconds: 180
   log_retention_days: 30
+  # Live Tail, metric filters and `aws logs tail` are worth the full price where tenants are.
+  log_class: STANDARD
   monitoring: true
   dashboard: true
   private_tasks: true
@@ -243,6 +251,7 @@ ephemeral:
     on_demand_percent: 0
   health_check_grace_seconds: 90
   log_retention_days: 1
+  log_class: INFREQUENT_ACCESS
   monitoring: false
   # Throwaway environments get no saved page; the console's automatic views are enough.
   dashboard: false

@@ -326,6 +326,7 @@ module "service" {
   force_new_deployment       = !var.flavour.protected
   health_check_grace_seconds = var.flavour.health_check_grace_seconds
   log_retention_days         = var.flavour.log_retention_days
+  log_group_class            = var.flavour.log_class
 
   # spg attaches to both NLB listeners; everything else is internal to the pod.
   target_groups = try(each.value.edge.lb, "") == "nlb" ? {
