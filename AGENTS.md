@@ -38,7 +38,7 @@ main.tf variables.tf outputs.tf backend.tf versions.tf   the environment root
 
 **The pipeline.** The README's launch button creates the bootstrap stack; it writes the env config to SSM,
 creates the state bucket, a scoped deploy role and the CodeBuild projects, then starts the line:
-`1-prereq` (ECR + ACM from the catalog) → `2-images` (`bootBuildImage --publishImage -Pversion=$IMAGE_TAG`
+`1-prereq` (ECR + ACM from the catalog) → `2-images` (`bootBuildImage --publishImage -Pnative -Pversion=$IMAGE_TAG`
 in `../cvhome`) → `3-apply` (`terraform apply`). Each stage starts the next only on success. Companion
 projects: `-hibernate`, `-wake` (`scripts/hibernate.sh` / `wake.sh` do the same from a laptop) and
 `-destroy`. **CodeBuild is the deployer; GitHub Actions only validates**

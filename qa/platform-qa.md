@@ -58,6 +58,19 @@ none was recorded against this script, so none is marked verified.
   `latest` for a release; `latest` only for a branch build); the build log shows
   `bootBuildImage --publishImage`; the Gradle cache made the second run visibly faster; `3-apply` started.
 
+### 02.2b The twelve Spring images are native executables, and `-Pnative` is the whole switch [not verified]
+- Setup: 02.2 on a `cvhome` version that carries the native build (`feat/graalvm-native`, cvhome-saas/cvhome).
+- Steps: read the `2-images` log; `docker pull` one Spring image (`store-pod/catalog`) and
+  `docker run --rm --entrypoint sh <image> -c 'ls /workspace'`; note the build's duration and the host's peak memory
+  in CodeBuild's metrics; start a task and read its log's first line and `Started ... in` line.
+- Expect: the log shows `BP_NATIVE_IMAGE=true` for the twelve Spring services and four native-image builds at a
+  time, each finishing without an out-of-memory kill; `/workspace` holds a single executable, no `BOOT-INF`; the task
+  starts in about a second where the JVM took tens of seconds; the build fits `TimeoutInMinutes: 120` with room.
+  Record the duration here and in `bootstrap.yaml`'s comment. The three Node/Caddy images are unchanged.
+- Rollback: the same stack with `-Pnative` removed from the buildspec builds the JVM images as before.
+- Expected to fail: a `cvhome` tag older than the native build ignores `-Pnative` and ships JVM images — correct,
+  and not a failure.
+
 ### 02.3 `3-apply` — the environment converges and the console answers [not verified]
 - Setup: 02.2.
 - Steps: wait for `3-apply`; `terraform output console_url` from the build log; open it; sign in with the

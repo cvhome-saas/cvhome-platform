@@ -641,7 +641,7 @@ Resources:
     Type: AWS::CodeBuild::Project
     Properties:
       Name: !Sub "${ProjectId}-${EnvName}-2-images"
-      Description: Build and push all 15 service images, named after ImageTag
+      Description: Build and push all 15 service images, named after ImageTag (Spring services native)
       ServiceRole: !GetAtt BuildRole.Arn
       Artifacts: { Type: NO_ARTIFACTS }
       # Measured on build e5942837: 826s total, of which bootBuildImage is 606s. Inside
@@ -663,9 +663,20 @@ Resources:
           - LOCAL_DOCKER_LAYER_CACHE
           - LOCAL_CUSTOM_CACHE
           - LOCAL_SOURCE_CACHE
+      # The Spring services are GraalVM native executables (-Pnative below; cvhome's
+      # references/build-system.md). On a 14-core laptop one service compiles in 52 s to
+      # 1m37s and the largest (payment) peaks at 11.9 GB of compiler heap; at 7 GB it runs
+      # out. LARGE's 15 GB could run them only one at a time. XLARGE (36 vCPU, 70 GB) runs
+      # four at once with each compiler capped at 12 GB (-PnativeImageArgs): 4 x ~13.5 GB
+      # resident leaves room for Gradle (-Xmx10g above) and Docker. The laptop built the
+      # twelve in 17 minutes three at a time; the first CodeBuild run is the number to put
+      # here, with the host's peak memory.
+      #
+      # Dropping -Pnative builds the JVM images exactly as before; the services are one
+      # flag away from the old artefacts, which is the rollback.
       Environment:
         Type: LINUX_CONTAINER
-        ComputeType: BUILD_GENERAL1_LARGE
+        ComputeType: BUILD_GENERAL1_XLARGE
         Image: aws/codebuild/standard:7.0
         PrivilegedMode: true
         EnvironmentVariables:
@@ -711,7 +722,8 @@ Resources:
                     VERSION_FLAG="-Pversion=$IMAGE_TAG"
                   fi
                   echo "Publishing images as ${IMAGE_TAG} from $(git rev-parse --short HEAD 2>/dev/null || echo "$CODEBUILD_RESOLVED_SOURCE_VERSION")"
-                  ./gradlew bootBuildImage --publishImage $VERSION_FLAG -x test -x check --no-daemon --parallel --build-cache
+                  ./gradlew bootBuildImage --publishImage -Pnative -PnativeImageArgs=-J-Xmx12g $VERSION_FLAG \
+                    -x test -x check --no-daemon --parallel --max-workers=4 --build-cache
       # A release builds the application at its tag, so the images named X.Y.Z are
       # built from the commit that carries vX.Y.Z and nothing else. The chaining
       # rule starts this project with no overrides, so the project default is what

@@ -28,7 +28,7 @@ One click, then wait.
 
    ```
    1-prereq   ECR repositories + ACM certificate, from services.yaml
-   2-images   ./gradlew bootBuildImage --publishImage -Pversion=$IMAGE_TAG   (15 images)
+   2-images   ./gradlew bootBuildImage --publishImage -Pnative -Pversion=$IMAGE_TAG   (15 images; the 12 Spring ones native)
    3-apply    terraform apply                            (everything else)
    ```
 
