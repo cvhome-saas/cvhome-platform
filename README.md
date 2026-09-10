@@ -141,6 +141,16 @@ flavour_overrides = {
 Overrides merge one level deep into `rds`, `capacity` and `sizes`, so changing one field
 does not mean restating the block.
 
+### Below prod
+
+`dev`, `staging` and `ephemeral` give up some resilience for a smaller bill. Each trade
+is a flavour key, so one environment can take it back with `flavour_overrides`.
+
+- **Fargate Spot only.** No service keeps an on-demand task. A reclaim is a short outage
+  of that one service until ECS places its replacement, and ECS does not fall back to
+  on-demand when Spot capacity runs short. `capacity = { on_demand_base = 1 }` restores
+  the base.
+
 ## Dashboard
 
 Every environment whose flavour says `dashboard: true` (all but `ephemeral`) gets one

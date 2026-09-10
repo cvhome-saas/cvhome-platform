@@ -120,7 +120,12 @@ staging:
   static_asset_retention_days: 30
   cdn_price_class: PriceClass_100
   capacity:
-    on_demand_base: 1
+    # Spot only, like dev. The base is per service and every staging service runs one
+    # task, so a base of 1 put all sixteen tasks on on-demand Fargate (~$222/month at
+    # us-east-1 list price). The trade: a reclaim is a short outage of that one service,
+    # and ECS does not fall back to on-demand when Spot capacity runs short. Put the base
+    # back for one environment with flavour_overrides = { capacity = { on_demand_base = 1 } }.
+    on_demand_base: 0
     on_demand_percent: 0
   health_check_grace_seconds: 120
   log_retention_days: 14

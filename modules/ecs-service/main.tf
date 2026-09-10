@@ -214,6 +214,11 @@ resource "aws_ecs_service" "this" {
     weight            = 100 - var.capacity.on_demand_percent
   }
 
+  # The provider refuses to change capacity_provider_strategy on a running service
+  # unless this is true. Null rather than false where it is off, so a service that never
+  # set it sees no diff.
+  force_new_deployment = var.force_new_deployment ? true : null
+
   deployment_controller {
     type = "ECS"
   }

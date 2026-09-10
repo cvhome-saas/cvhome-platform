@@ -6,7 +6,7 @@ The path an operator takes to stand up, change, pause and tear down a CVHome env
 - **Scope** — the bootstrap stack, the three CodeBuild stages, promotion by tfvars, hibernate/wake, destroy.
 - **Runs on** — a real AWS account and a Route53 hosted zone; eu-central-1 unless stated. Nothing here
   runs from an agent session (`AGENTS.md` → *Build, run and verify*).
-- **Cases** — 15 (0 verified, 15 not verified)
+- **Cases** — 18 (0 verified, 18 not verified)
 - **Also see** — `../cvhome/qa/lcl-qa.md` for the stack itself, `../cvhome/store-core/*/qa/*-qa.md` for the
   product flows to run once an environment is up; `README.md` here for the commands.
 
@@ -151,6 +151,16 @@ none was recorded against this script, so none is marked verified.
 - Steps: apply; open CloudWatch → Dashboards.
 - Expect: no dashboard for that environment; `terraform output dashboard_url` is null; nothing else in
   the plan changed.
+
+## 07 — Cost below prod
+
+### 07.1 Staging runs every task on Fargate Spot [not verified]
+- Setup: a running `staging` environment applied from this change (the apply redeploys every service once:
+  moving a running service between capacity strategies needs a new deployment).
+- Steps: `aws ecs list-tasks` / `describe-tasks` for both clusters (`<project>-staging-store-core`,
+  `<project>-staging-store-pod-507f1f77`); read `capacityProviderName` on each task.
+- Expect: every task says `FARGATE_SPOT`, the otel-collector included; no service was replaced (the plan
+  showed in-place updates, not `-/+`); a prod plan of the same commit shows no change to any ECS service.
 
 ## REG — regression watchlist
 

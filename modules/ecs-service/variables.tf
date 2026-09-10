@@ -166,6 +166,16 @@ variable "capacity" {
   })
 }
 
+variable "force_new_deployment" {
+  description = <<-EOT
+    Roll the tasks on every update of the service. The provider will not change
+    `capacity` on a running service without it. Callers pass !flavour.protected, so a
+    protected environment's services are never redeployed by it and never see it in a plan.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "health_check_grace_seconds" {
   description = <<-EOT
     Grace period before the load balancer's verdict can kill a task. The legacy module

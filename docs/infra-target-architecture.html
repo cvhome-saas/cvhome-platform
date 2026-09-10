@@ -1102,6 +1102,7 @@
           <dt>Proposed</dt><dd>An on-demand base with Spot overflow under prod; Spot-heavy below it; circuit breaker with rollback everywhere.</dd>
           <dt>Why</dt><dd>At <code>desired = 1</code> on pure Spot, a reclamation is an outage — and with the circuit breaker off, a bad task definition never rolls back.</dd>
           <dt>Cost</dt><dd>An increase under prod, stated deliberately.</dd>
+          <dt>Amended</dt><dd>Staging runs Spot only, like dev and ephemeral. Its base of one on-demand task was per service, and every staging service runs one task, so all sixteen staging tasks were on-demand: about $222 a month at us-east-1 list price for 5.75 vCPU and 16 GB. A reclamation there is a short outage of one service, which a rehearsal environment can take; <code>flavour_overrides</code> puts the base back for one environment. Prod keeps its base.</dd>
         </dl>
       </div>
     </section>

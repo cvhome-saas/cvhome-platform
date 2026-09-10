@@ -323,6 +323,7 @@ module "service" {
   desired_count              = var.flavour.desired_count
   autoscaling                = local.autoscaling[each.key]
   capacity                   = var.flavour.capacity
+  force_new_deployment       = !var.flavour.protected
   health_check_grace_seconds = var.flavour.health_check_grace_seconds
   log_retention_days         = var.flavour.log_retention_days
 
