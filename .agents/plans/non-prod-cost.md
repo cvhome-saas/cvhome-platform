@@ -85,8 +85,54 @@ on one database under lcl.
 
 ## Deviations, as built
 
-(filled in while implementing)
+- **The NAT image follows the instance type.** `data "aws_ec2_instance_type"` picks arm64 or x86_64 for the
+  AL2023 image, instead of refusing non-Graviton types.
+- **A type change replaces the NAT instance.** The type is rendered into the user data, so changing
+  `nat_instance_type` goes through create-before-destroy and the readiness gate. Without that it would be an
+  in-place stop and start: every task cut off, or a failure across architectures, since `ami` is ignored after
+  creation.
+- **The readiness gate waits up to ten minutes, not five.** A failed gate stops the apply, so it errs long.
+- **The connection guard covers every flavour's busiest instance, not only shared ones.** Staging comes to 84
+  of 190 and prod to 168 of 190, so both pass.
+- **The QA file's case count was stale.** It said 15 while 17 cases existed; it now counts 24.
+- **Found while verifying, not fixed here (pre-existing):**
+  - `main.tf:60` and `prereq/main.tf:37` derive `dns_prefix` with
+    `coalesce(var.dns_prefix, var.env == "prod" ? "" : var.env)`. `coalesce` skips empty strings, so under
+    `env = "prod"` both roots fail with "no non-null, non-empty-string arguments": prod cannot plan today.
+    Introduced in a2a4972.
+  - On a first create under prod, `aws_appautoscaling_policy.requests` has a `count` that depends on the new
+    ALB's ARN suffix, which is unknown at plan time. A fresh prod environment cannot plan; an existing one
+    can, because its suffix is in state.
+- **Unchanged:** `bootstrap/bootstrap.yaml`'s flavour description, which is still true for prod ("prod runs
+  tasks in private subnets behind a NAT gateway"). Leaving it avoids republishing the template for wording.
 
 ## Verification
 
-(filled in while implementing)
+- **`scripts/verify.sh` passes:** fmt; init and validate for the root, `prereq` and all five modules; catalog
+  drift ("no drift"). tflint and cfn-lint are not installed locally.
+- **tflint 0.64.0**, the `latest` CI installs, run in its container against the worktree mounted read-only,
+  with the aws ruleset 0.44.0 from `.tflint.hcl`: no issues. The bootstrap is untouched, so cfn-lint is not needed.
+- **A scratch mocked plan** (`terraform test` with `mock_provider "aws"` and `command = plan`, in a copy
+  outside the repo, not committed) passes all eight runs:
+
+  | Run | What it asserts |
+  |---|---|
+  | dev | one NAT instance, security group, S3 endpoint, readiness gate and route; no gateway; no public task IPs |
+  | dev hibernated | instance and route gone; security group and endpoint kept |
+  | dev with `network = { egress = "public_ip" }` | no NAT at all; public tasks; `nat_instance_type` survives the one-level merge |
+  | prod | gateway, EIP and route only; nothing new; private tasks |
+  | dev with a second pod | pod-1 shares (no instance or security group of its own), pod-2 keeps its own; 66 of 80 |
+  | dev with `db_pool_size = 4` | the guard fails the plan (88 > 80) |
+  | staging | its own pod database, behind the NAT instance; 84 of 190 |
+  | prod database | its own pod database; 168 of 190 |
+
+  Two scratch-only patches were needed to get a mocked plan at all, both for the pre-existing issues above:
+  the `dns_prefix` expression, and prod's `request_target`.
+- **User data rendered** with sample values: no interpolation left, `bash -n` clean.
+- **The readiness gate's loop,** run against a stub `aws`: marker on the third poll gives exit 0; never
+  gives exit 1 with the message.
+- **`scripts/contract-check.py --cvhome-platform <worktree>`:** catalog, env and edges OK. The WARNs (spg image
+  pins, `image_tag = latest`, QA counts) predate this change. `scripts/impact.py`: no env name, health check,
+  TLS or bucket contract changes.
+- **Not run:** any real plan or apply. There are no AWS calls from an agent session, and `plan (dev)` is
+  skipped in this repo's CI. QA 07.1–07.7 are **[not verified]** until an operator runs them.
