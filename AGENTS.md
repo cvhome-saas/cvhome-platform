@@ -26,9 +26,9 @@ services.yaml              the catalog: 15 services, for_each'd into everything
 flavours.yaml              environment shapes (dev, staging, prod, ephemeral) and the size table
 prereq/                    ECR + ACM, its own state, applied before the image build
 modules/ecs-service/       one ECS service: task def, SG, Cloud Map, IAM, autoscaling
-modules/network/           VPC, subnets, NAT (prod only)
+modules/network/           VPC, subnets, the NAT: gateway (prod) or instance (below prod)
 modules/store-core/        cluster, ALB, RDS, the 6 core services
-modules/store-pod/         per pod: cluster, NLB, RDS, CDN, the 9 pod services
+modules/store-pod/         per pod: cluster, NLB, RDS (core's for the default pod in dev), CDN, the 9 pod services
 modules/dashboard/         one CloudWatch dashboard per environment from the default AWS metrics
 envs/*.tfvars              human choices per environment (image_tag = the product version it runs)
 scripts/                   check-catalog-drift.py, check-release-pins.py, hibernate.sh, wake.sh,
@@ -183,7 +183,9 @@ against one.
 6. **CodeBuild is the canonical deployer.** GitHub Actions drops to plan-on-PR via **OIDC** (no static
    `AWS_ACCESS_KEY_ID` secrets).
 7. **Per-pod RDS** and **per-pod NLB**. Isolation over cost; `spg` terminates TLS with Caddy on-demand
-   certificates for custom tenant domains, which SNI routing on a shared NLB cannot express.
+   certificates for custom tenant domains, which SNI routing on a shared NLB cannot express. Amended with
+   the user: in `dev` and `ephemeral` the default pod shares store-core's instance (`rds.shared`), since
+   their data belongs to no one; staging and prod keep one instance per pod.
 8. **`project` is a stable, settable id** (not random 4 chars) and **`env` is a real parameter**. Resources
    named `${project}-${env}-*`. State at `env/<env>/terraform.tfstate` with **S3 native locking**
    (`use_lockfile`, Terraform ≥ 1.10) — no DynamoDB table.
@@ -219,8 +221,9 @@ main.tf variables.tf outputs.tf backend.tf
 - **Reliable by default.** On-demand Fargate base with Spot overflow under prod (legacy is
   `FARGATE_SPOT` weight 100, no base); deployment circuit breaker with rollback; a real
   `health_check_grace_period_seconds` for Spring Boot; RDS encryption, backups, deletion protection under
-  prod. Private subnets + a single NAT gateway **only** under the prod flavour — NAT at ~$33/mo/AZ is not
-  worth it in dev/staging.
+  prod. Private subnets everywhere: one NAT gateway under prod, one NAT instance below it
+  (`flavours.yaml` `network.egress`). Public task IPs were the cheap option until AWS began billing every
+  public IPv4 by the hour; fifteen of them cost more than a t4g.nano and its one address.
 - **Right-size.** All 15 services are currently identically 512 CPU / 1024 MB / 1 task — the largest easy
   cost win.
 

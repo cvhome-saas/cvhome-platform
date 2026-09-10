@@ -30,6 +30,19 @@ output "database_endpoint" {
   value = aws_db_instance.this.endpoint
 }
 
+output "database" {
+  description = "This layer's database, for the default pod to share where the flavour says rds.shared."
+  value = {
+    identifier        = aws_db_instance.this.identifier
+    address           = aws_db_instance.this.address
+    port              = aws_db_instance.this.port
+    db_name           = aws_db_instance.this.db_name
+    username          = aws_db_instance.this.username
+    secret_arn        = aws_db_instance.this.master_user_secret[0].secret_arn
+    security_group_id = aws_security_group.db.id
+  }
+}
+
 output "service_names" {
   value = sort(keys(module.service))
 }

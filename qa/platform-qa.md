@@ -6,7 +6,7 @@ The path an operator takes to stand up, change, pause and tear down a CVHome env
 - **Scope** — the bootstrap stack, the three CodeBuild stages, promotion by tfvars, hibernate/wake, destroy.
 - **Runs on** — a real AWS account and a Route53 hosted zone; eu-central-1 unless stated. Nothing here
   runs from an agent session (`AGENTS.md` → *Build, run and verify*).
-- **Cases** — 15 (0 verified, 15 not verified)
+- **Cases** — 24 (0 verified, 24 not verified)
 - **Also see** — `../cvhome/qa/lcl-qa.md` for the stack itself, `../cvhome/store-core/*/qa/*-qa.md` for the
   product flows to run once an environment is up; `README.md` here for the commands.
 
@@ -92,15 +92,16 @@ none was recorded against this script, so none is marked verified.
 ### 03.3 `latest` is refused for a protected flavour [not verified]
 - Setup: `envs/prod.tfvars` with `image_tag = "latest"` on a branch.
 - Steps: open a PR; also push a `v*` tag on a throwaway fork.
-- Expect: the plan fails on the precondition in `main.tf`; the `release-guard` job fails on the tag; a
-  `dev` tfvars with `latest` still passes.
+- Expect: the plan fails on the precondition in `main.tf`, with its own message about `image_tag` and not
+  a `coalesce` error (see REG); the `release-guard` job fails on the tag; a `dev` tfvars with `latest`
+  still passes; with a released version in `envs/prod.tfvars` the same plan succeeds.
 
 ## 04 — Hibernate and wake
 
 ### 04.1 Hibernate destroys the hourly things and keeps the stateful ones [not verified]
 - Setup: a running `dev` (02.3) with at least one product created in the console and one media upload.
 - Steps: `scripts/hibernate.sh dev` (or the `-hibernate` CodeBuild project); wait.
-- Expect: ECS services, ALB, per-pod NLBs, NAT gateway and their Route53 aliases are gone; RDS instances
+- Expect: ECS services, ALB, per-pod NLBs, the NAT (the instance under `dev`) and their Route53 aliases are gone; RDS instances
   are **stopped**, not deleted; S3 buckets, CloudFront distributions, secrets, ECR images, VPC, Cloud Map
   namespaces and ECS clusters remain; hostnames do not resolve; SSM `/<project>/dev/hibernated` reads
   `true`; the bill for the next hour is compute-free.
@@ -133,7 +134,8 @@ none was recorded against this script, so none is marked verified.
   page, upload one media file so the CDN and RDS have something to show).
 - Steps: `terraform output dashboard_url`; open it in the console signed in to the account.
 - Expect: a dashboard named `<project>-dev`; sections *store-core*, one per pod (`pod-507f1f77` for the
-  default pod) and, only under a flavour with `nat_gateway: true`, *network*; every metric widget draws a
+  default pod) and *network* (the NAT instance under `dev`; the NAT gateway under a flavour with
+  `network.egress: nat_gateway`); every metric widget draws a
   line within five minutes (CloudFront within fifteen; its metrics arrive from us-east-1); the *Recent
   errors* table at the end of each section runs without a query error and lists ERROR lines from that
   layer's services, or nothing, which is also a pass; no widget shows "Metric not found" or an empty
@@ -152,6 +154,80 @@ none was recorded against this script, so none is marked verified.
 - Expect: no dashboard for that environment; `terraform output dashboard_url` is null; nothing else in
   the plan changed.
 
+## 07 — Cost below prod
+
+### 07.1 Staging runs every task on Fargate Spot [not verified]
+- Setup: a running `staging` environment applied from this change (the apply redeploys every service once:
+  moving a running service between capacity strategies needs a new deployment).
+- Steps: `aws ecs list-tasks` / `describe-tasks` for both clusters (`<project>-staging-store-core`,
+  `<project>-staging-store-pod-507f1f77`); read `capacityProviderName` on each task.
+- Expect: every task says `FARGATE_SPOT`, the otel-collector included; no service was replaced (the plan
+  showed in-place updates, not `-/+`); a prod plan of the same commit shows no change to any ECS service.
+
+### 07.2 Non-prod log groups are Infrequent Access and still readable [not verified]
+- Setup: a `dev` environment applied from this change (the apply replaces each service's log group:
+  the class is fixed at creation), then a few minutes of traffic.
+- Steps: CloudWatch → Log groups, filter `/aws/ecs/<project>/dev/`; open the dashboard's *Recent errors*
+  table; run a Logs Insights query over one service's group; try `aws logs tail` on the same group.
+- Expect: every group shows class *Infrequent Access*; the Insights query and the dashboard table return
+  lines; `aws logs tail` is refused (the class has no GetLogEvents / FilterLogEvents), which is the known
+  trade; tasks kept running while their groups were recreated; a prod plan shows no log group change.
+
+### 07.3 Below prod, tasks leave through the NAT instance, not addresses of their own [not verified]
+- Setup: a `dev` environment that ran with public task IPs, applied from this change. The cleanest path is
+  `-hibernate` then `-wake`; a plain `3-apply` also works.
+- Steps: read the apply log; `aws ecs describe-tasks` for a few tasks in both clusters and
+  `aws ec2 describe-network-interfaces` on their ENIs; EC2 → Instances; VPC → Route tables and Endpoints;
+  sign in to the console; open a storefront on the pod domain; run `scripts/register-stripe-webhook.sh`;
+  put a new custom domain on a test store so Caddy asks Let's Encrypt for a certificate.
+- Expect: the log shows `terraform_data.nat_ready` printing "NAT instance i-… is forwarding." before any
+  ECS service is updated; no task ENI has a public IP, and every task is in a private subnet; one
+  `<project>-dev-nat` t4g.nano with a public IP and source/dest check off; the private route table sends
+  `0.0.0.0/0` to its ENI and has the S3 gateway endpoint; every service steady with no circuit-breaker
+  rollback; console, storefront, webhook registration and the certificate all work, so image pulls,
+  Secrets Manager, CloudWatch Logs, Cloud Map `DiscoverInstances`, Stripe and ACME are all getting out;
+  the dashboard has a *network - NAT instance* section with data.
+
+### 07.4 Replacing the NAT instance does not cut the environment off [not verified]
+- Setup: 07.3.
+- Steps: set `flavour_overrides = { network = { nat_instance_type = "t4g.micro" } }` and apply (a type
+  change is a replacement: the type is rendered into the user data); keep the storefront open while it
+  runs. Then remove the override and apply again.
+- Expect: the plan replaces the instance (`+/-`, create before destroy) rather than updating it in place;
+  the new instance is created and reports ready, the route moves to it, and only then is the old one
+  terminated; service logs show no burst of connection failures to AWS APIs; tasks are not replaced.
+
+### 07.5 The `public_ip` override puts the addresses back and removes the NAT [not verified]
+- Setup: `dev` from 07.3 with `flavour_overrides = { network = { egress = "public_ip" } }` in tfvars on a branch.
+- Steps: plan, then apply; revert the override and apply again.
+- Expect: the first plan moves every service to the public subnets with `assign_public_ip`, destroys the
+  instance, its route and the S3 endpoint, and keeps `nat_instance_type` (one-level merge); the services
+  settle; the revert brings the instance back through the readiness gate. A prod plan of this commit shows
+  no network change at all.
+
+### 07.6 In dev, core and the default pod share one database [not verified]
+- Setup: a `dev` environment that ran with two databases, applied from this change. The cleanest path is
+  `-hibernate` (compute goes, then the pod's instance is deleted while nothing holds a connection; dev
+  keeps no final snapshot) and then `-wake`. With `test_stores` on, the seed data comes back.
+- Steps: RDS → Databases; read one pod service's task definition; open the core instance's security group;
+  sign in to the console and load a storefront; watch the dashboard's *RDS connections* widget under
+  store-core through a full redeploy (`3-apply` with a new image tag).
+- Expect: one instance, `<project>-dev-store-core`, and no `…-store-pod-507f1f77`; the pod services'
+  `SPRING_DATASOURCE_HOST` is the core instance and their password comes from its master secret; the core
+  security group admits every core and pod service on 5432 (the pod rules say `Postgres from pod-507f1f77
+  <service>`); the storefront and the console work; peak connections during the redeploy stay under 80
+  (the guard's figure: eleven services × 3 × 2 = 66), with no "remaining connection slots are reserved" in
+  any service log; the pod section of the dashboard has no RDS widgets of its own.
+
+### 07.7 Other pods, staging and prod keep their own databases; the guard refuses an overflow [not verified]
+- Setup: a branch with `pod_ids = ["<24 random hex>"]` in `envs/dev.tfvars`; separately,
+  `flavour_overrides = { rds = { db_pool_size = 4 } }`.
+- Steps: plan each; plan `staging` and `prod` from the same commit.
+- Expect: the second pod plans its own `aws_db_instance`; the pool override fails at plan time with "A
+  rolling deploy would open 88 connections on one db.t4g.micro, which holds about 80"; the staging plan
+  keeps both instances; the prod plan shows the pod instance and security group only as `moved` to
+  `[0]`, with no change to either.
+
 ## REG — regression watchlist
 
 Defects that already shipped once in the legacy repos or during this repo's development:
@@ -164,6 +240,9 @@ Defects that already shipped once in the legacy repos or during this repo's deve
 - A stopped RDS that AWS restarts on day eight (04.2).
 - The destroy project unable to delete the roles it created (05.1).
 - Four services with no ECR repository at all (02.1: count is 15, and `check-catalog-drift.py` in CI).
+- Every `prod` plan failed, in both roots, with "no non-null, non-empty-string arguments": `dns_prefix`
+  went through `coalesce()`, which skips prod's `""` as well as nulls. It failed before any precondition
+  could speak, so 03.3 would have "passed" for the wrong reason (03.3, and any prod plan).
 
 ## 99 — known gaps
 

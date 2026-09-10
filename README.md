@@ -71,7 +71,7 @@ scripts/wake.sh dev          # or <project>-dev-wake
 |---|---|
 | ECS services and tasks | RDS instances — **stopped**, not deleted |
 | ALB, per-pod NLBs, target groups | S3 buckets: media, Caddy certificates, logs |
-| NAT gateway | CloudFront distributions |
+| The NAT: gateway (prod) or instance (below prod) | CloudFront distributions |
 | Route53 records aliasing them | Secrets Manager, ECR images |
 | | VPC, subnets, Cloud Map namespaces, ECS clusters |
 
@@ -138,8 +138,45 @@ flavour_overrides = {
 }
 ```
 
-Overrides merge one level deep into `rds`, `capacity` and `sizes`, so changing one field
-does not mean restating the block.
+Overrides merge one level deep into `rds`, `capacity`, `sizes` and `network`, so
+changing one field does not mean restating the block.
+
+### Below prod
+
+`dev`, `staging` and `ephemeral` give up some resilience for a smaller bill. Each trade
+is a flavour key, so one environment can take it back with `flavour_overrides`.
+
+- **Fargate Spot only.** No service keeps an on-demand task. A reclaim is a short outage
+  of that one service until ECS places its replacement, and ECS does not fall back to
+  on-demand when Spot capacity runs short. `capacity = { on_demand_base = 1 }` restores
+  the base.
+- **Infrequent Access logs.** `log_class: INFREQUENT_ACCESS` halves log ingestion
+  ($0.25/GB against $0.50 in us-east-1). Read these logs with CloudWatch Logs Insights,
+  as the dashboard's error tables already do. Live Tail, `aws logs tail`,
+  `filter-log-events` and the ECS console's Logs tab do not work on this class, and it
+  takes no metric or subscription filters. The class is fixed when a log group is
+  created: switching it recreates the groups and drops their history.
+- **A NAT instance, not public IPs and not the gateway.** `network.egress: nat_instance`
+  puts tasks in private subnets behind one t4g.nano. AWS bills every public IPv4 at
+  $0.005/h, so a public address on each of dev's fifteen tasks cost $54.75 a month; the
+  instance and its single address cost about $7.40. The managed gateway would be $32.85
+  a month before any bytes. What the instance gives up is managed availability: if it
+  fails, every task loses the internet until EC2 recovers it. That covers image pulls,
+  Secrets Manager at task start, CloudWatch Logs, Stripe, ACME, and the app's own Cloud
+  Map `DiscoverInstances` calls, so below prod the instance sits on the request path. A
+  free S3 gateway endpoint keeps image layers off it. An apply that creates the
+  instance waits until its user data reports the NAT working, which needs the AWS CLI
+  wherever Terraform runs (CodeBuild and the hibernate/wake scripts have it).
+  `network = { egress = "public_ip" }` goes back to an address per task.
+- **One database for core and the default pod** (`dev` and `ephemeral` only:
+  `rds.shared`). Every service owns a schema named after itself, so store-core's four
+  database services and the default pod's seven share store-core's instance, as they
+  already share one Postgres under lcl. That is one db.t4g.micro and its storage instead
+  of two, $13.98 a month. Other pods keep their own; their schemas would collide with
+  the default pod's. The pod's services then hold store-core's master secret, so this
+  is for data that belongs to no one. The pools shrink to 3, and `main.tf` refuses a
+  plan whose rolling deploy would open more connections than the busiest instance holds.
+  Staging keeps prod's per-pod databases and its data.
 
 ## Dashboard
 
@@ -153,7 +190,7 @@ so it needs no agent, no Container Insights and no collector, and reads the same
 |---|---|---|
 | store-core | CPU and memory per service; ALB requests and errors, target response time (p50/p90/p99), healthy and unhealthy targets, requests per target, connections; RDS CPU, connections, free memory and storage, latency, burst credits; recent errors from the log groups | `AWS/ECS`, `AWS/ApplicationELB`, `AWS/RDS`, Logs Insights |
 | each pod | CPU and memory per service; NLB flows, bytes, resets, healthy and unhealthy spg targets; CDN requests, error rates, bytes; the same RDS widgets; recent errors | `AWS/ECS`, `AWS/NetworkELB`, `AWS/CloudFront`, `AWS/RDS`, Logs Insights |
-| network | NAT bytes, connections, port-allocation errors and dropped packets — only under a flavour that runs a NAT gateway | `AWS/NATGateway` |
+| network | NAT gateway bytes, connections, port-allocation errors and dropped packets (prod); or NAT instance bytes, CPU and credit balance, failed status checks (below prod) | `AWS/NATGateway`, `AWS/EC2` |
 
 Positions are explicit, so an apply never reshuffles the page. The dashboard names the
 load balancers and services by ARN suffix, which do not exist while hibernated, so it is
@@ -228,9 +265,9 @@ services.yaml              the catalog
 flavours.yaml              environment shapes
 prereq/                    ECR + ACM. Applied before the image build.
 modules/ecs-service/       one ECS service: task def, SG, Cloud Map, IAM, autoscaling
-modules/network/           VPC, subnets, NAT (prod only)
+modules/network/           VPC, subnets, the NAT: gateway (prod) or instance (below prod)
 modules/store-core/        cluster, ALB, RDS, the 6 core services
-modules/store-pod/         per pod: cluster, NLB, RDS, CDN, the 9 pod services
+modules/store-pod/         per pod: cluster, NLB, RDS (core's for the default pod in dev), CDN, the 9 pod services
 envs/*.tfvars              human choices per environment
 scripts/                   catalog drift and release pin checks, Stripe webhook registration
 main.tf …                  the environment root

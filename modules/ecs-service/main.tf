@@ -96,7 +96,9 @@ resource "aws_vpc_security_group_egress_rule" "all" {
 resource "aws_cloudwatch_log_group" "this" {
   name              = local.log_group
   retention_in_days = var.log_retention_days
-  tags              = var.tags
+  # Fixed at creation: changing it replaces the group and drops its history.
+  log_group_class = var.log_group_class
+  tags            = var.tags
 }
 
 # ---------------------------------------------------------------------- task defs
@@ -213,6 +215,11 @@ resource "aws_ecs_service" "this" {
     capacity_provider = "FARGATE_SPOT"
     weight            = 100 - var.capacity.on_demand_percent
   }
+
+  # The provider refuses to change capacity_provider_strategy on a running service
+  # unless this is true. Null rather than false where it is off, so a service that never
+  # set it sees no diff.
+  force_new_deployment = var.force_new_deployment ? true : null
 
   deployment_controller {
     type = "ECS"

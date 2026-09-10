@@ -97,6 +97,35 @@ variable "postgres_version" {
   type = string
 }
 
+variable "database_shared" {
+  description = <<-EOT
+    Use store-core's database instead of creating one (flavour rds.shared, default pod
+    only). Passed apart from shared_database because it keys a count, so it has to be
+    known at plan time; shared_database's attributes do not exist until core's instance does.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "shared_database" {
+  description = "store-core's database, when database_shared. Its services get ingress on its security group."
+  type = object({
+    identifier        = string
+    address           = string
+    port              = number
+    db_name           = string
+    username          = string
+    secret_arn        = string
+    security_group_id = string
+  })
+  default = null
+
+  validation {
+    condition     = !var.database_shared || var.shared_database != null
+    error_message = "database_shared is true but no shared_database was passed."
+  }
+}
+
 variable "tags" {
   description = "Extra identity tags. Project/Environment/Flavour arrive via provider default_tags."
   type        = map(string)

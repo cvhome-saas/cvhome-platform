@@ -3,8 +3,8 @@
 # Hibernate an environment: destroy everything billed by the hour, keep everything
 # holding state, then stop the databases.
 #
-#   destroyed   ECS services and tasks, ALB, per-pod NLBs, NAT gateway, and the
-#               Route53 records that alias them
+#   destroyed   ECS services and tasks, ALB, per-pod NLBs, the NAT (gateway or
+#               instance), and the Route53 records that alias them
 #   kept        RDS instances (stopped), S3 buckets, CloudFront distributions,
 #               Secrets Manager, ECR images, the VPC, Cloud Map namespaces and the
 #               ECS clusters — all either free or holding state
@@ -95,7 +95,8 @@ cat <<SUMMARY
 
   Still billing: RDS storage and backups, S3 storage, ECR storage, Secrets Manager,
   the hosted zone, and one Route53 private hosted zone per Cloud Map namespace.
-  No longer billing: Fargate tasks, load balancer hours, NAT hours.
+  No longer billing: Fargate tasks, load balancer hours, NAT hours and the NAT's
+  public address.
 
   Wake it with: scripts/wake.sh ${ENV_NAME}
 SUMMARY

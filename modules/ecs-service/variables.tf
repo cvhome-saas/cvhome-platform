@@ -42,8 +42,9 @@ variable "subnets" {
 
 variable "assign_public_ip" {
   description = <<-EOT
-    Whether tasks get a public IP. False requires NAT for egress, so it is driven by the
-    flavour's private_tasks: prod runs private, dev and staging do not.
+    Whether tasks get a public IP. False requires a NAT for egress, so it is driven by
+    the flavour's network.egress: true only under public_ip, which no flavour uses by
+    default any more, because AWS bills each of those addresses by the hour.
   EOT
   type        = bool
 }
@@ -166,6 +167,16 @@ variable "capacity" {
   })
 }
 
+variable "force_new_deployment" {
+  description = <<-EOT
+    Roll the tasks on every update of the service. The provider will not change
+    `capacity` on a running service without it. Callers pass !flavour.protected, so a
+    protected environment's services are never redeployed by it and never see it in a plan.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "health_check_grace_seconds" {
   description = <<-EOT
     Grace period before the load balancer's verdict can kill a task. The legacy module
@@ -178,6 +189,22 @@ variable "health_check_grace_seconds" {
 variable "log_retention_days" {
   type    = number
   default = 14
+}
+
+variable "log_group_class" {
+  description = <<-EOT
+    CloudWatch Logs class of the service's log group. INFREQUENT_ACCESS halves ingestion
+    but serves reads through Logs Insights only: no Live Tail, no GetLogEvents or
+    FilterLogEvents (so no `aws logs tail` and no ECS console log tab), and no metric or
+    subscription filters. The class is fixed when the group is created.
+  EOT
+  type        = string
+  default     = "STANDARD"
+
+  validation {
+    condition     = contains(["STANDARD", "INFREQUENT_ACCESS"], var.log_group_class)
+    error_message = "log_group_class must be STANDARD or INFREQUENT_ACCESS."
+  }
 }
 
 # --- edge ------------------------------------------------------------------------

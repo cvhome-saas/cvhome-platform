@@ -839,7 +839,7 @@
           <thead><tr><th>Defect today</th><th>Target</th></tr></thead>
           <tbody>
             <tr><td>SG ingress 0–65535</td><td>The service's own port only, from the VPC CIDR</td></tr>
-            <tr><td>Tasks public, with public IPs</td><td>Private subnets + one NAT <strong>under prod</strong>; dev/staging stay public-subnet</td></tr>
+            <tr><td>Tasks public, with public IPs</td><td>Private subnets in every flavour: one NAT gateway <strong>under prod</strong>, one NAT instance below it (ADR-10, amended)</td></tr>
             <tr><td>RDS <code>publicly_accessible</code></td><td>Never publicly accessible, in any flavour</td></tr>
             <tr><td>Task roles <code>*</code> on s3/ssm/secretsmanager</td><td>Scoped to the service's own ECR repo, log group, and <code>/${project}/${env}/*</code></td></tr>
             <tr><td>Deploy role <code>PowerUserAccess</code> + <code>iam:*</code></td><td>Explicit statement list</td></tr>
@@ -850,9 +850,16 @@
           </tbody>
         </table>
       </div>
-      <p>On networking cost specifically: NAT gateways are <em>not</em> enabled for dev or staging. They are
+      <p>On networking cost specifically: NAT <em>gateways</em> are not enabled for dev or staging. They are
       poor value there, and VPC interface endpoints are not cheaper for this traffic mix. Prod pays for one
-      NAT and gets private tasks — the trade is stated, not buried.</p>
+      NAT gateway and gets private tasks — the trade is stated, not buried.</p>
+      <p><strong>Amended.</strong> Keeping dev and staging tasks in public subnets turned out not to be the
+      cheap option: AWS bills every public IPv4 address by the hour ($0.005/h in us-east-1), so the
+      fifteen dev tasks cost $54.75 a month in addresses alone and staging's sixteen $58.40. Below prod
+      tasks now run in private subnets behind one t4g.nano NAT instance ($0.0042/h, plus its single
+      address: about $7.40 a month), chosen by <code>network.egress</code> in the flavour. A free S3
+      gateway endpoint rides along so image layers, which ECR serves from S3, bypass the instance. Prod
+      keeps the gateway.</p>
 
       <h3>i. CI/CD</h3>
       <p><strong>CodeBuild is canonical — Actions never applies again.</strong> GitHub Actions becomes a
@@ -875,12 +882,16 @@
         session is out of scope for now, so any number here would be asserted from memory. That is exactly
         the failure mode this document exists to avoid. What follows is the cost <em>structure</em>, which
         does not depend on a price lookup.</p>
+        <p>Amended: the figures that now appear in §h, the levers below and ADR-7, ADR-10 and ADR-11 are
+        us-east-1 list prices read from AWS's public price-list files
+        (<code>pricing.us-east-1.amazonaws.com/offers/v1.0/aws/…</code>) at 730 hours a month. The
+        structure holds without them.</p>
       </div>
 
       <h3>What each environment is made of</h3>
       <p><strong>Fixed per environment</strong>, independent of pod count: store-core ECS tasks (6
       services), store-core RDS, the ALB, Route53, CloudWatch Logs, CodeBuild minutes, ECR storage across
-      15 repositories, Secrets Manager, and — under prod only — one NAT gateway.</p>
+      15 repositories, Secrets Manager, and one NAT — a gateway under prod, an instance below it.</p>
 
       <p><strong>Scaling linearly with pod count</strong>, which is the term that decides the bill:</p>
       <div class="tw">
@@ -911,20 +922,26 @@
         DNS resolves inside the VPC, so a single environment-level collector costs nothing in complexity and
         removes N tasks.</li>
         <li><strong>Flavour-gated monitoring</strong> — off entirely below staging.</li>
-        <li><strong>Log retention from the flavour</strong>, rather than a hardcoded 14 days everywhere.</li>
-        <li><strong>No NAT below prod</strong> — saves the hourly charge and per-GB processing in the two
-        environments that run most of the time.</li>
+        <li><strong>Log retention from the flavour</strong>, rather than a hardcoded 14 days everywhere —
+        and below prod the <strong>Infrequent Access log class</strong>, which ingests at half the price
+        ($0.25/GB against $0.50 in us-east-1) and is read through Logs Insights only.</li>
+        <li><strong>No NAT <em>gateway</em> below prod</strong> — saves the hourly charge and per-GB
+        processing in the two environments that run most of the time. <em>Amended:</em> nor public task
+        addresses, which AWS bills at $0.005/h each; a NAT instance carries the traffic for about $7.40 a
+        month where fifteen addresses cost $54.75.</li>
       </ol>
 
       <h3>Trades stated, not buried</h3>
       <ul>
         <li><strong>Per-pod RDS</strong> costs materially more than a shared instance with a schema per pod.
-        Bought for tenant isolation and per-pod restore.</li>
+        Bought for tenant isolation and per-pod restore — in staging and prod. Dev and ephemeral hold no
+        one's data, so there the default pod shares store-core's instance (ADR-7, amended).</li>
         <li><strong>On-demand Fargate base under prod</strong> costs more per task-hour than pure Spot.
         Bought because at <code>desired = 1</code> on pure Spot, a reclamation is an outage.</li>
-        <li><strong>One NAT gateway under prod</strong> is a real monthly line item, bought to get tasks out
-        of public subnets — and not bought below prod, where narrowed security groups do the load-bearing
-        work.</li>
+        <li><strong>One NAT gateway under prod</strong> is a real monthly line item ($32.85 before any
+        bytes), bought for managed availability on the one path every task takes out of the VPC. Below prod
+        a NAT instance does the same job for about $7.40 and gives that availability up: if it fails,
+        private tasks lose the internet — Cloud Map lookups included — until EC2 recovers it.</li>
       </ul>
     </section>
 
@@ -1061,6 +1078,7 @@
           <dt>Trade-offs</dt><dd>The dominant term that scales with pod count.</dd>
           <dt>Cost</dt><dd>Highest per-pod line item — accepted, with levers taken elsewhere.</dd>
           <dt>Rejected</dt><dd class="rej">One shared RDS with a schema per pod — cheaper, but couples tenant blast radius and restores.</dd>
+          <dt>Amended</dt><dd>In <code>dev</code> and <code>ephemeral</code> (<code>rds.shared</code>) the default pod uses store-core's instance: one db.t4g.micro and its storage instead of two, $13.98 a month at us-east-1 list. No schema prefix is needed: every service already owns a schema named after itself, and core's four and one pod's seven do not collide, as lcl shows by running all fifteen on one database. A second pod's would, so other pods keep their own instance. The pod's services hold core's master secret there and could read core's schemas; that is accepted for data that belongs to no one. Staging and prod keep one instance per pod, as proposed above.</dd>
         </dl>
       </div>
 
@@ -1092,6 +1110,7 @@
           <dt>Proposed</dt><dd>Prod runs tasks in private subnets behind one NAT; dev and staging keep public subnets; RDS is never publicly accessible in any flavour.</dd>
           <dt>Why</dt><dd>The security gap that matters most is the publicly reachable database, and closing it costs nothing. Private tasks cost real money, so they are bought where they matter.</dd>
           <dt>Trade-offs</dt><dd>Dev and staging tasks keep public IPs; the narrowed security groups do the load-bearing work there.</dd>
+          <dt>Amended</dt><dd>Below prod, tasks run in private subnets behind one NAT instance (<code>network.egress: nat_instance</code>); prod keeps the gateway (<code>nat_gateway</code>). The trade-off above missed that AWS bills every public IPv4 by the hour — $0.005/h in us-east-1 — so public task IPs cost dev $54.75 and staging $58.40 a month, against about $7.40 for a t4g.nano and its one address. The instance runs AWS's AL2023 image with the VPC guide's NAT recipe; an apply waits for it to report ready before any service moves behind it. It gives up the gateway's managed availability, which a rehearsal environment can live without.</dd>
         </dl>
       </div>
 
@@ -1102,6 +1121,7 @@
           <dt>Proposed</dt><dd>An on-demand base with Spot overflow under prod; Spot-heavy below it; circuit breaker with rollback everywhere.</dd>
           <dt>Why</dt><dd>At <code>desired = 1</code> on pure Spot, a reclamation is an outage — and with the circuit breaker off, a bad task definition never rolls back.</dd>
           <dt>Cost</dt><dd>An increase under prod, stated deliberately.</dd>
+          <dt>Amended</dt><dd>Staging runs Spot only, like dev and ephemeral. Its base of one on-demand task was per service, and every staging service runs one task, so all sixteen staging tasks were on-demand: about $222 a month at us-east-1 list price for 5.75 vCPU and 16 GB. A reclamation there is a short outage of one service, which a rehearsal environment can take; <code>flavour_overrides</code> puts the base back for one environment. Prod keeps its base.</dd>
         </dl>
       </div>
     </section>
