@@ -13,10 +13,10 @@
 # ~170 MB metaspace for ~28k classes, 250 x 1 MB thread stacks), so a 512 MB task
 # cannot start a JVM at all: billing exited with "fixed memory regions require
 # 680550K which is greater than 558560K available". Only the Node UIs fit in 512.
-# That floor is the JVM's: 2-images now builds the Spring services as GraalVM native
-# executables (103-141 MB footprint on a live stack, cvhome qa/lcl-qa.md § 17), which
-# fit in 512. The sizes below stay until load-testing measures the native services
-# at 512 MB; that resize is its own change.
+# That floor is the JVM's. The Spring services can also ship as GraalVM native
+# executables (the hand-started 2-images-native build; 103-141 MB footprint on a live
+# stack, cvhome qa/lcl-qa.md § 17), which fit in 512. 2-images, the default, still
+# builds JVM images, so the sizes below must fit a JVM and stay as they are.
 # The legacy stack gave all 15 services an identical 512/1024, which is the single
 # largest easy cost win — and because pod services are billed once per pod, the saving
 # multiplies by pod count.
