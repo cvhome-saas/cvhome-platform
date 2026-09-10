@@ -1,0 +1,26 @@
+#!/bin/bash
+# NAT for the private subnets, as in the AWS VPC guide's "Create a NAT AMI".
+#
+# Rendered for ${instance_type}. Naming the type here makes a type change a new user
+# data, and so a replacement that goes through the readiness gate, instead of an
+# in-place stop and start that cuts every task off (or fails outright when the new
+# type is another architecture than the image).
+#
+# Order matters. Starting the iptables service loads its stock rules, which reject
+# forwarded packets, so the service starts first and the NAT rules go on top of it.
+set -euo pipefail
+
+dnf install -y iptables-services
+systemctl enable --now iptables
+
+echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/90-nat.conf
+sysctl --system
+
+# Whatever this instance type names the interface that holds the default route.
+iface=$(ip -o -4 route show to default | awk '{print $5; exit}')
+iptables -t nat -A POSTROUTING -o "$iface" -s ${vpc_cidr} -j MASQUERADE
+iptables -F FORWARD
+iptables-save > /etc/sysconfig/iptables
+
+# Last, so that it means everything above worked: terraform_data.nat_ready waits for it.
+echo "${ready_marker}" > /dev/console

@@ -42,8 +42,9 @@ variable "subnets" {
 
 variable "assign_public_ip" {
   description = <<-EOT
-    Whether tasks get a public IP. False requires NAT for egress, so it is driven by the
-    flavour's private_tasks: prod runs private, dev and staging do not.
+    Whether tasks get a public IP. False requires a NAT for egress, so it is driven by
+    the flavour's network.egress: true only under public_ip, which no flavour uses by
+    default any more, because AWS bills each of those addresses by the hour.
   EOT
   type        = bool
 }

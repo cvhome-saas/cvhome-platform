@@ -41,6 +41,7 @@ jobs:
         dir:
           - .
           - prereq
+          - modules/dashboard
           - modules/ecs-service
           - modules/network
           - modules/store-core

@@ -40,8 +40,8 @@ variable "flavour" {
 variable "flavour_overrides" {
   description = <<-EOT
     Per-key overrides merged over the chosen flavour. Shallow at the top level and one
-    level into `rds` and `capacity`, which is enough to say "prod, but a bigger
-    database" without forking a flavour.
+    level into `rds`, `capacity`, `sizes` and `network`, which is enough to say "prod,
+    but a bigger database" without forking a flavour.
   EOT
   type        = any
   default     = {}
@@ -78,8 +78,8 @@ variable "hibernated" {
     Hibernate the environment: destroy everything billed by the hour and keep
     everything holding state.
 
-      destroyed  ECS services and tasks, ALB, per-pod NLBs, NAT gateway, and the
-                 Route53 records that alias them
+      destroyed  ECS services and tasks, ALB, per-pod NLBs, the NAT (gateway or
+                 instance), and the Route53 records that alias them
       kept       RDS (stopped separately — Terraform cannot stop an instance),
                  S3 buckets, CloudFront, Secrets Manager, ECR images, the VPC,
                  Cloud Map namespaces and the ECS clusters, all of which are free

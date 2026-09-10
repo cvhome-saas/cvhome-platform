@@ -1,6 +1,7 @@
 # One CloudWatch dashboard per environment, built only from the metrics AWS publishes
 # for free the moment a resource exists: AWS/ECS, AWS/ApplicationELB, AWS/NetworkELB,
-# AWS/RDS, AWS/CloudFront, AWS/NATGateway, and the awslogs log groups. Nothing here
+# AWS/RDS, AWS/CloudFront, AWS/NATGateway or AWS/EC2 for a NAT instance, and the
+# awslogs log groups. Nothing here
 # needs Container Insights, the otel-collector or an agent, so the page reads the same
 # under every flavour, including the ones with `monitoring: false`.
 #
@@ -256,6 +257,39 @@ locals {
     },
   ]
 
+  # Below prod the NAT is one EC2 instance, and every private task depends on it. Basic
+  # monitoring publishes every five minutes, so these widgets ask for five-minute points.
+  nat_instance_widgets = var.nat_instance_id == null ? [] : [
+    {
+      title  = "NAT instance bytes"
+      stat   = "Sum"
+      period = 300
+      metrics = [
+        ["AWS/EC2", "NetworkOut", "InstanceId", var.nat_instance_id, { label = "out" }],
+        ["AWS/EC2", "NetworkIn", "InstanceId", var.nat_instance_id, { label = "in" }],
+      ]
+    },
+    {
+      # A t4g earns CPU credits slowly; a balance at zero is a NAT that has started to crawl.
+      title  = "NAT instance CPU"
+      stat   = "Average"
+      period = 300
+      metrics = [
+        ["AWS/EC2", "CPUUtilization", "InstanceId", var.nat_instance_id, { label = "cpu %" }],
+        ["AWS/EC2", "CPUCreditBalance", "InstanceId", var.nat_instance_id, { label = "credit balance", yAxis = "right" }],
+      ]
+    },
+    {
+      # Zero on a healthy instance. Anything else and the private tasks have lost the internet.
+      title  = "NAT instance status checks failed"
+      stat   = "Maximum"
+      period = 300
+      metrics = [
+        ["AWS/EC2", "StatusCheckFailed", "InstanceId", var.nat_instance_id, { label = "failed" }],
+      ]
+    },
+  ]
+
   # ---------------------------------------------------------------------- sections
   #
   # In reading order: the core layer, then each pod, then the network the flavour
@@ -280,6 +314,13 @@ locals {
       {
         title      = "network - NAT gateway ${var.nat_gateway_id}"
         widgets    = local.nat_widgets
+        log_groups = []
+      },
+    ],
+    var.nat_instance_id == null ? [] : [
+      {
+        title      = "network - NAT instance ${var.nat_instance_id}"
+        widgets    = local.nat_instance_widgets
         log_groups = []
       },
     ],
@@ -328,7 +369,7 @@ locals {
             region  = try(w.region, var.region)
             view    = "timeSeries"
             stacked = false
-            period  = 60
+            period  = try(w.period, 60)
             stat    = w.stat
             metrics = w.metrics
             yAxis   = { left = { min = 0 } }

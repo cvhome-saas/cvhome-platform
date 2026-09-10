@@ -67,15 +67,16 @@ locals {
 
   # ------------------------------------------------------------------- the flavour
   #
-  # One named bundle, with per-key overrides merged over it. `rds` and `capacity` are
-  # merged one level deep so an override can change a single field without restating
-  # the whole block.
+  # One named bundle, with per-key overrides merged over it. `rds`, `capacity`, `sizes`
+  # and `network` are merged one level deep so an override can change a single field
+  # without restating the whole block.
   base = local.flavours[var.flavour]
 
   flavour = merge(local.base, var.flavour_overrides, {
     rds      = merge(local.base.rds, try(var.flavour_overrides.rds, {}))
     capacity = merge(local.base.capacity, try(var.flavour_overrides.capacity, {}))
     sizes    = merge(local.base.sizes, try(var.flavour_overrides.sizes, {}))
+    network  = merge(local.base.network, try(var.flavour_overrides.network, {}))
   })
 
   # ----------------------------------------------------------------------- pods
@@ -156,10 +157,9 @@ module "network" {
   cidr_block = var.vpc_cidr_block
   az_count   = var.az_count
 
-  private_tasks   = local.flavour.private_tasks
-  nat_gateway     = local.flavour.nat_gateway
-  compute_enabled = !var.hibernated
-
+  egress            = local.flavour.network.egress
+  nat_instance_type = local.flavour.network.nat_instance_type
+  compute_enabled   = !var.hibernated
 }
 
 # --------------------------------------------------------------------------- logs
@@ -329,5 +329,6 @@ module "dashboard" {
     }
   }
 
-  nat_gateway_id = module.network.nat_gateway_id
+  nat_gateway_id  = module.network.nat_gateway_id
+  nat_instance_id = module.network.nat_instance_id
 }

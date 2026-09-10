@@ -6,7 +6,7 @@ The path an operator takes to stand up, change, pause and tear down a CVHome env
 - **Scope** — the bootstrap stack, the three CodeBuild stages, promotion by tfvars, hibernate/wake, destroy.
 - **Runs on** — a real AWS account and a Route53 hosted zone; eu-central-1 unless stated. Nothing here
   runs from an agent session (`AGENTS.md` → *Build, run and verify*).
-- **Cases** — 19 (0 verified, 19 not verified)
+- **Cases** — 22 (0 verified, 22 not verified)
 - **Also see** — `../cvhome/qa/lcl-qa.md` for the stack itself, `../cvhome/store-core/*/qa/*-qa.md` for the
   product flows to run once an environment is up; `README.md` here for the commands.
 
@@ -100,7 +100,7 @@ none was recorded against this script, so none is marked verified.
 ### 04.1 Hibernate destroys the hourly things and keeps the stateful ones [not verified]
 - Setup: a running `dev` (02.3) with at least one product created in the console and one media upload.
 - Steps: `scripts/hibernate.sh dev` (or the `-hibernate` CodeBuild project); wait.
-- Expect: ECS services, ALB, per-pod NLBs, NAT gateway and their Route53 aliases are gone; RDS instances
+- Expect: ECS services, ALB, per-pod NLBs, the NAT (the instance under `dev`) and their Route53 aliases are gone; RDS instances
   are **stopped**, not deleted; S3 buckets, CloudFront distributions, secrets, ECR images, VPC, Cloud Map
   namespaces and ECS clusters remain; hostnames do not resolve; SSM `/<project>/dev/hibernated` reads
   `true`; the bill for the next hour is compute-free.
@@ -133,7 +133,8 @@ none was recorded against this script, so none is marked verified.
   page, upload one media file so the CDN and RDS have something to show).
 - Steps: `terraform output dashboard_url`; open it in the console signed in to the account.
 - Expect: a dashboard named `<project>-dev`; sections *store-core*, one per pod (`pod-507f1f77` for the
-  default pod) and, only under a flavour with `nat_gateway: true`, *network*; every metric widget draws a
+  default pod) and *network* (the NAT instance under `dev`; the NAT gateway under a flavour with
+  `network.egress: nat_gateway`); every metric widget draws a
   line within five minutes (CloudFront within fifteen; its metrics arrive from us-east-1); the *Recent
   errors* table at the end of each section runs without a query error and lists ERROR lines from that
   layer's services, or nothing, which is also a pass; no widget shows "Metric not found" or an empty
@@ -170,6 +171,38 @@ none was recorded against this script, so none is marked verified.
 - Expect: every group shows class *Infrequent Access*; the Insights query and the dashboard table return
   lines; `aws logs tail` is refused (the class has no GetLogEvents / FilterLogEvents), which is the known
   trade; tasks kept running while their groups were recreated; a prod plan shows no log group change.
+
+### 07.3 Below prod, tasks leave through the NAT instance, not addresses of their own [not verified]
+- Setup: a `dev` environment that ran with public task IPs, applied from this change. The cleanest path is
+  `-hibernate` then `-wake`; a plain `3-apply` also works.
+- Steps: read the apply log; `aws ecs describe-tasks` for a few tasks in both clusters and
+  `aws ec2 describe-network-interfaces` on their ENIs; EC2 → Instances; VPC → Route tables and Endpoints;
+  sign in to the console; open a storefront on the pod domain; run `scripts/register-stripe-webhook.sh`;
+  put a new custom domain on a test store so Caddy asks Let's Encrypt for a certificate.
+- Expect: the log shows `terraform_data.nat_ready` printing "NAT instance i-… is forwarding." before any
+  ECS service is updated; no task ENI has a public IP, and every task is in a private subnet; one
+  `<project>-dev-nat` t4g.nano with a public IP and source/dest check off; the private route table sends
+  `0.0.0.0/0` to its ENI and has the S3 gateway endpoint; every service steady with no circuit-breaker
+  rollback; console, storefront, webhook registration and the certificate all work, so image pulls,
+  Secrets Manager, CloudWatch Logs, Cloud Map `DiscoverInstances`, Stripe and ACME are all getting out;
+  the dashboard has a *network - NAT instance* section with data.
+
+### 07.4 Replacing the NAT instance does not cut the environment off [not verified]
+- Setup: 07.3.
+- Steps: set `flavour_overrides = { network = { nat_instance_type = "t4g.micro" } }` and apply (a type
+  change is a replacement: the type is rendered into the user data); keep the storefront open while it
+  runs. Then remove the override and apply again.
+- Expect: the plan replaces the instance (`+/-`, create before destroy) rather than updating it in place;
+  the new instance is created and reports ready, the route moves to it, and only then is the old one
+  terminated; service logs show no burst of connection failures to AWS APIs; tasks are not replaced.
+
+### 07.5 The `public_ip` override puts the addresses back and removes the NAT [not verified]
+- Setup: `dev` from 07.3 with `flavour_overrides = { network = { egress = "public_ip" } }` in tfvars on a branch.
+- Steps: plan, then apply; revert the override and apply again.
+- Expect: the first plan moves every service to the public subnets with `assign_public_ip`, destroys the
+  instance, its route and the S3 endpoint, and keeps `nat_instance_type` (one-level merge); the services
+  settle; the revert brings the instance back through the readiness gate. A prod plan of this commit shows
+  no network change at all.
 
 ## REG — regression watchlist
 

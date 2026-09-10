@@ -26,7 +26,7 @@ services.yaml              the catalog: 15 services, for_each'd into everything
 flavours.yaml              environment shapes (dev, staging, prod, ephemeral) and the size table
 prereq/                    ECR + ACM, its own state, applied before the image build
 modules/ecs-service/       one ECS service: task def, SG, Cloud Map, IAM, autoscaling
-modules/network/           VPC, subnets, NAT (prod only)
+modules/network/           VPC, subnets, the NAT: gateway (prod) or instance (below prod)
 modules/store-core/        cluster, ALB, RDS, the 6 core services
 modules/store-pod/         per pod: cluster, NLB, RDS, CDN, the 9 pod services
 modules/dashboard/         one CloudWatch dashboard per environment from the default AWS metrics
@@ -217,8 +217,9 @@ main.tf variables.tf outputs.tf backend.tf
 - **Reliable by default.** On-demand Fargate base with Spot overflow under prod (legacy is
   `FARGATE_SPOT` weight 100, no base); deployment circuit breaker with rollback; a real
   `health_check_grace_period_seconds` for Spring Boot; RDS encryption, backups, deletion protection under
-  prod. Private subnets + a single NAT gateway **only** under the prod flavour — NAT at ~$33/mo/AZ is not
-  worth it in dev/staging.
+  prod. Private subnets everywhere: one NAT gateway under prod, one NAT instance below it
+  (`flavours.yaml` `network.egress`). Public task IPs were the cheap option until AWS began billing every
+  public IPv4 by the hour; fifteen of them cost more than a t4g.nano and its one address.
 - **Right-size.** All 15 services are currently identically 512 CPU / 1024 MB / 1 task — the largest easy
   cost win.
 

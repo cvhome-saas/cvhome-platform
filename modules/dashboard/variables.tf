@@ -42,3 +42,9 @@ variable "nat_gateway_id" {
   type        = string
   default     = null
 }
+
+variable "nat_instance_id" {
+  description = "The environment's NAT instance, when the flavour runs one. Null otherwise, and the section is omitted."
+  type        = string
+  default     = null
+}

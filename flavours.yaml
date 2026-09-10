@@ -60,8 +60,14 @@ dev:
   # RDS, CloudFront, NAT, the log groups). Independent of `monitoring`, which is the
   # collector, OTLP export and Container Insights. See modules/dashboard.
   dashboard: true
-  private_tasks: false
-  nat_gateway: false
+  network:
+    # How tasks reach the internet: public_ip (a public IPv4 on every task, no NAT),
+    # nat_instance (private tasks behind one EC2 instance) or nat_gateway (private
+    # tasks behind the managed gateway). AWS bills every public IPv4 at $0.005/h, so the
+    # fifteen task addresses public_ip spends here cost $54.75 a month; a t4g.nano and
+    # its one address cost about $7.40. The gateway is $32.85 a month before any bytes.
+    egress: nat_instance
+    nat_instance_type: t4g.nano
   rds:
     instance_class: db.t4g.micro
     # Hikari maximum-pool-size per Spring task. Postgres on a t4g.micro allows about
@@ -137,8 +143,9 @@ staging:
   log_class: INFREQUENT_ACCESS
   monitoring: true
   dashboard: true
-  private_tasks: false
-  nat_gateway: false
+  network:
+    egress: nat_instance
+    nat_instance_type: t4g.nano
   rds:
     instance_class: db.t4g.small
     # Hikari maximum-pool-size per Spring task. Postgres on a t4g.micro allows about
@@ -202,8 +209,10 @@ prod:
   log_class: STANDARD
   monitoring: true
   dashboard: true
-  private_tasks: true
-  nat_gateway: true
+  network:
+    # Managed availability for the one path every task takes out of the VPC.
+    egress: nat_gateway
+    nat_instance_type: t4g.nano
   rds:
     instance_class: db.t4g.small
     # Hikari maximum-pool-size per Spring task. Postgres on a t4g.micro allows about
@@ -255,8 +264,9 @@ ephemeral:
   monitoring: false
   # Throwaway environments get no saved page; the console's automatic views are enough.
   dashboard: false
-  private_tasks: false
-  nat_gateway: false
+  network:
+    egress: nat_instance
+    nat_instance_type: t4g.nano
   rds:
     instance_class: db.t4g.micro
     # Hikari maximum-pool-size per Spring task. Postgres on a t4g.micro allows about

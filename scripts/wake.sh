@@ -9,6 +9,11 @@
 # service that starts against a database still booting fails its health check, gets
 # killed by the circuit breaker, and rolls the deployment back.
 #
+# The same reasoning holds for the way out of the VPC. Below prod the apply creates the
+# NAT instance and waits for it to report ready (terraform_data.nat_ready in
+# modules/network) before any service lands in the private subnets. That wait adds a
+# minute or two and needs the AWS CLI, which this script needs anyway.
+#
 #   Usage: wake.sh <env>
 
 set -euo pipefail
