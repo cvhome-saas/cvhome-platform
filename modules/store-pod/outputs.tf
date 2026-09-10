@@ -16,7 +16,13 @@ output "cdn_domain" {
 }
 
 output "database_endpoint" {
-  value = aws_db_instance.this.endpoint
+  description = "The pod's own database. Null when it shares store-core's, which core reports."
+  value       = var.database_shared ? null : aws_db_instance.this[0].endpoint
+}
+
+output "database_shared" {
+  description = "Whether this pod's services use store-core's database rather than their own."
+  value       = var.database_shared
 }
 
 output "service_names" {
@@ -43,7 +49,8 @@ output "nlb_target_group_arn_suffixes" {
 }
 
 output "db_identifier" {
-  value = aws_db_instance.this.identifier
+  description = "Null when the pod shares store-core's database; the dashboard shows that one under store-core."
+  value       = var.database_shared ? null : aws_db_instance.this[0].identifier
 }
 
 output "cdn_distribution_id" {

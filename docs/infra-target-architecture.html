@@ -934,7 +934,8 @@
       <h3>Trades stated, not buried</h3>
       <ul>
         <li><strong>Per-pod RDS</strong> costs materially more than a shared instance with a schema per pod.
-        Bought for tenant isolation and per-pod restore.</li>
+        Bought for tenant isolation and per-pod restore — in staging and prod. Dev and ephemeral hold no
+        one's data, so there the default pod shares store-core's instance (ADR-7, amended).</li>
         <li><strong>On-demand Fargate base under prod</strong> costs more per task-hour than pure Spot.
         Bought because at <code>desired = 1</code> on pure Spot, a reclamation is an outage.</li>
         <li><strong>One NAT gateway under prod</strong> is a real monthly line item ($32.85 before any
@@ -1077,6 +1078,7 @@
           <dt>Trade-offs</dt><dd>The dominant term that scales with pod count.</dd>
           <dt>Cost</dt><dd>Highest per-pod line item — accepted, with levers taken elsewhere.</dd>
           <dt>Rejected</dt><dd class="rej">One shared RDS with a schema per pod — cheaper, but couples tenant blast radius and restores.</dd>
+          <dt>Amended</dt><dd>In <code>dev</code> and <code>ephemeral</code> (<code>rds.shared</code>) the default pod uses store-core's instance: one db.t4g.micro and its storage instead of two, $13.98 a month at us-east-1 list. No schema prefix is needed: every service already owns a schema named after itself, and core's four and one pod's seven do not collide, as lcl shows by running all fifteen on one database. A second pod's would, so other pods keep their own instance. The pod's services hold core's master secret there and could read core's schemas; that is accepted for data that belongs to no one. Staging and prod keep one instance per pod, as proposed above.</dd>
         </dl>
       </div>
 

@@ -112,11 +112,12 @@ locals {
     { name = "AWS_REGION", value = aws_s3_bucket.cdn.region },
   ]
 
+  # local.db is the pod's own instance, or store-core's when the pod shares it (rds.tf).
   database_env = [
-    { name = "SPRING_DATASOURCE_DATABASE", value = aws_db_instance.this.db_name },
-    { name = "SPRING_DATASOURCE_HOST", value = aws_db_instance.this.address },
-    { name = "SPRING_DATASOURCE_PORT", value = tostring(aws_db_instance.this.port) },
-    { name = "SPRING_DATASOURCE_USERNAME", value = aws_db_instance.this.username },
+    { name = "SPRING_DATASOURCE_DATABASE", value = local.db.db_name },
+    { name = "SPRING_DATASOURCE_HOST", value = local.db.address },
+    { name = "SPRING_DATASOURCE_PORT", value = tostring(local.db.port) },
+    { name = "SPRING_DATASOURCE_USERNAME", value = local.db.username },
     # Sized by the flavour to what the instance class can hold across every service in
     # the layer, with a rolling deploy's brief doubling included. Hikari's default of 10
     # exhausted a t4g.micro mid-deploy and tasks died on "remaining connection slots
@@ -125,7 +126,7 @@ locals {
   ]
 
   database_secret = [
-    { name = "SPRING_DATASOURCE_PASSWORD", valueFrom = "${aws_db_instance.this.master_user_secret[0].secret_arn}:password::" },
+    { name = "SPRING_DATASOURCE_PASSWORD", valueFrom = "${local.db.secret_arn}:password::" },
   ]
 
   node_env = concat(
@@ -244,7 +245,7 @@ locals {
       )
 
       secret_arns = distinct(compact(concat(
-        try(svc.database, false) ? [aws_db_instance.this.master_user_secret[0].secret_arn] : [],
+        try(svc.database, false) ? [local.db.secret_arn] : [],
         svc.runtime == "spring" ? [local.secret_arns.sso] : [],
         [for ref in values(try(svc.secrets, {})) : local.secret_arns[split(":", ref)[0]]],
       )))

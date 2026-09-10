@@ -6,7 +6,7 @@ The path an operator takes to stand up, change, pause and tear down a CVHome env
 - **Scope** — the bootstrap stack, the three CodeBuild stages, promotion by tfvars, hibernate/wake, destroy.
 - **Runs on** — a real AWS account and a Route53 hosted zone; eu-central-1 unless stated. Nothing here
   runs from an agent session (`AGENTS.md` → *Build, run and verify*).
-- **Cases** — 22 (0 verified, 22 not verified)
+- **Cases** — 24 (0 verified, 24 not verified)
 - **Also see** — `../cvhome/qa/lcl-qa.md` for the stack itself, `../cvhome/store-core/*/qa/*-qa.md` for the
   product flows to run once an environment is up; `README.md` here for the commands.
 
@@ -203,6 +203,29 @@ none was recorded against this script, so none is marked verified.
   instance, its route and the S3 endpoint, and keeps `nat_instance_type` (one-level merge); the services
   settle; the revert brings the instance back through the readiness gate. A prod plan of this commit shows
   no network change at all.
+
+### 07.6 In dev, core and the default pod share one database [not verified]
+- Setup: a `dev` environment that ran with two databases, applied from this change. The cleanest path is
+  `-hibernate` (compute goes, then the pod's instance is deleted while nothing holds a connection; dev
+  keeps no final snapshot) and then `-wake`. With `test_stores` on, the seed data comes back.
+- Steps: RDS → Databases; read one pod service's task definition; open the core instance's security group;
+  sign in to the console and load a storefront; watch the dashboard's *RDS connections* widget under
+  store-core through a full redeploy (`3-apply` with a new image tag).
+- Expect: one instance, `<project>-dev-store-core`, and no `…-store-pod-507f1f77`; the pod services'
+  `SPRING_DATASOURCE_HOST` is the core instance and their password comes from its master secret; the core
+  security group admits every core and pod service on 5432 (the pod rules say `Postgres from pod-507f1f77
+  <service>`); the storefront and the console work; peak connections during the redeploy stay under 80
+  (the guard's figure: eleven services × 3 × 2 = 66), with no "remaining connection slots are reserved" in
+  any service log; the pod section of the dashboard has no RDS widgets of its own.
+
+### 07.7 Other pods, staging and prod keep their own databases; the guard refuses an overflow [not verified]
+- Setup: a branch with `pod_ids = ["<24 random hex>"]` in `envs/dev.tfvars`; separately,
+  `flavour_overrides = { rds = { db_pool_size = 4 } }`.
+- Steps: plan each; plan `staging` and `prod` from the same commit.
+- Expect: the second pod plans its own `aws_db_instance`; the pool override fails at plan time with "A
+  rolling deploy would open 88 connections on one db.t4g.micro, which holds about 80"; the staging plan
+  keeps both instances; the prod plan shows the pod instance and security group only as `moved` to
+  `[0]`, with no change to either.
 
 ## REG — regression watchlist
 

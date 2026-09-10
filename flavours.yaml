@@ -70,10 +70,18 @@ dev:
     nat_instance_type: t4g.nano
   rds:
     instance_class: db.t4g.micro
-    # Hikari maximum-pool-size per Spring task. Postgres on a t4g.micro allows about
-    # 110 connections and a t4g.small about 220; a rolling deploy briefly doubles every
-    # service, and at Hikari's default of 10 the nine pod services alone asked for 180.
-    db_pool_size: 4
+    # One instance for store-core and the default pod, instead of one each ($13.98 a
+    # month saved at us-east-1 list: a db.t4g.micro and 20 GB of gp3). Every service
+    # owns a schema named after itself, so both layers sit side by side on one database,
+    # as they already do under lcl. Other pods keep their own; their schemas would
+    # collide with the default pod's.
+    shared: true
+    # Hikari maximum-pool-size per Spring task. RDS for PostgreSQL allows about 80
+    # connections on a t4g.micro and 190 on a t4g.small, once it has taken its own share
+    # of the memory. A rolling deploy briefly doubles every service, and at Hikari's
+    # default of 10 the nine pod services alone asked for 180. Shared here, eleven
+    # database services at 3 make 66 mid-deploy; main.tf refuses a plan that overflows.
+    db_pool_size: 3
     allocated_storage: 20
     max_allocated_storage: 0
     backup_retention_days: 0
@@ -148,9 +156,12 @@ staging:
     nat_instance_type: t4g.nano
   rds:
     instance_class: db.t4g.small
-    # Hikari maximum-pool-size per Spring task. Postgres on a t4g.micro allows about
-    # 110 connections and a t4g.small about 220; a rolling deploy briefly doubles every
-    # service, and at Hikari's default of 10 the nine pod services alone asked for 180.
+    # Staging rehearses prod's per-pod database, and keeps its data.
+    shared: false
+    # Hikari maximum-pool-size per Spring task. RDS for PostgreSQL allows about 80
+    # connections on a t4g.micro and 190 on a t4g.small, once it has taken its own share
+    # of the memory. A rolling deploy briefly doubles every service, and at Hikari's
+    # default of 10 the nine pod services alone asked for 180.
     db_pool_size: 6
     allocated_storage: 20
     max_allocated_storage: 100
@@ -215,9 +226,12 @@ prod:
     nat_instance_type: t4g.nano
   rds:
     instance_class: db.t4g.small
-    # Hikari maximum-pool-size per Spring task. Postgres on a t4g.micro allows about
-    # 110 connections and a t4g.small about 220; a rolling deploy briefly doubles every
-    # service, and at Hikari's default of 10 the nine pod services alone asked for 180.
+    # Tenant data isolated at the instance boundary, one per pod (ADR-7).
+    shared: false
+    # Hikari maximum-pool-size per Spring task. RDS for PostgreSQL allows about 80
+    # connections on a t4g.micro and 190 on a t4g.small, once it has taken its own share
+    # of the memory. A rolling deploy briefly doubles every service, and at Hikari's
+    # default of 10 the nine pod services alone asked for 180.
     db_pool_size: 6
     allocated_storage: 50
     max_allocated_storage: 500
@@ -269,10 +283,12 @@ ephemeral:
     nat_instance_type: t4g.nano
   rds:
     instance_class: db.t4g.micro
-    # Hikari maximum-pool-size per Spring task. Postgres on a t4g.micro allows about
-    # 110 connections and a t4g.small about 220; a rolling deploy briefly doubles every
-    # service, and at Hikari's default of 10 the nine pod services alone asked for 180.
-    db_pool_size: 4
+    # One instance for store-core and the default pod, as in dev.
+    shared: true
+    # Hikari maximum-pool-size per Spring task. RDS for PostgreSQL allows about 80
+    # connections on a t4g.micro, once it has taken its own share of the memory. Shared
+    # here, eleven database services at 3 make 66 mid-deploy.
+    db_pool_size: 3
     allocated_storage: 20
     max_allocated_storage: 0
     backup_retention_days: 0

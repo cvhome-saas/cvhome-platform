@@ -28,7 +28,7 @@ prereq/                    ECR + ACM, its own state, applied before the image bu
 modules/ecs-service/       one ECS service: task def, SG, Cloud Map, IAM, autoscaling
 modules/network/           VPC, subnets, the NAT: gateway (prod) or instance (below prod)
 modules/store-core/        cluster, ALB, RDS, the 6 core services
-modules/store-pod/         per pod: cluster, NLB, RDS, CDN, the 9 pod services
+modules/store-pod/         per pod: cluster, NLB, RDS (core's for the default pod in dev), CDN, the 9 pod services
 modules/dashboard/         one CloudWatch dashboard per environment from the default AWS metrics
 envs/*.tfvars              human choices per environment (image_tag = the product version it runs)
 scripts/                   check-catalog-drift.py, check-release-pins.py, hibernate.sh, wake.sh,
@@ -181,7 +181,9 @@ against one.
 6. **CodeBuild is the canonical deployer.** GitHub Actions drops to plan-on-PR via **OIDC** (no static
    `AWS_ACCESS_KEY_ID` secrets).
 7. **Per-pod RDS** and **per-pod NLB**. Isolation over cost; `spg` terminates TLS with Caddy on-demand
-   certificates for custom tenant domains, which SNI routing on a shared NLB cannot express.
+   certificates for custom tenant domains, which SNI routing on a shared NLB cannot express. Amended with
+   the user: in `dev` and `ephemeral` the default pod shares store-core's instance (`rds.shared`), since
+   their data belongs to no one; staging and prod keep one instance per pod.
 8. **`project` is a stable, settable id** (not random 4 chars) and **`env` is a real parameter**. Resources
    named `${project}-${env}-*`. State at `env/<env>/terraform.tfstate` with **S3 native locking**
    (`use_lockfile`, Terraform ≥ 1.10) — no DynamoDB table.

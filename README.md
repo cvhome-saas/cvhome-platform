@@ -168,6 +168,15 @@ is a flavour key, so one environment can take it back with `flavour_overrides`.
   instance waits until its user data reports the NAT working, which needs the AWS CLI
   wherever Terraform runs (CodeBuild and the hibernate/wake scripts have it).
   `network = { egress = "public_ip" }` goes back to an address per task.
+- **One database for core and the default pod** (`dev` and `ephemeral` only:
+  `rds.shared`). Every service owns a schema named after itself, so store-core's four
+  database services and the default pod's seven share store-core's instance, as they
+  already share one Postgres under lcl. That is one db.t4g.micro and its storage instead
+  of two, $13.98 a month. Other pods keep their own; their schemas would collide with
+  the default pod's. The pod's services then hold store-core's master secret, so this
+  is for data that belongs to no one. The pools shrink to 3, and `main.tf` refuses a
+  plan whose rolling deploy would open more connections than the busiest instance holds.
+  Staging keeps prod's per-pod databases and its data.
 
 ## Dashboard
 
@@ -258,7 +267,7 @@ prereq/                    ECR + ACM. Applied before the image build.
 modules/ecs-service/       one ECS service: task def, SG, Cloud Map, IAM, autoscaling
 modules/network/           VPC, subnets, the NAT: gateway (prod) or instance (below prod)
 modules/store-core/        cluster, ALB, RDS, the 6 core services
-modules/store-pod/         per pod: cluster, NLB, RDS, CDN, the 9 pod services
+modules/store-pod/         per pod: cluster, NLB, RDS (core's for the default pod in dev), CDN, the 9 pod services
 envs/*.tfvars              human choices per environment
 scripts/                   catalog drift and release pin checks, Stripe webhook registration
 main.tf …                  the environment root

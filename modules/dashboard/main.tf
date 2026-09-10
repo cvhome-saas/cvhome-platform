@@ -46,8 +46,10 @@ locals {
     ]
   }
 
+  # A pod that shares store-core's database reports no identifier of its own, and its
+  # section leaves the RDS widgets out: the same instance is already drawn under core.
   rds_widgets = {
-    for key, layer in merge({ core = var.core }, var.pods) : key => [
+    for key, layer in merge({ core = var.core }, var.pods) : key => layer.db_identifier == null ? [] : [
       {
         title = "RDS CPU %"
         stat  = "Average"

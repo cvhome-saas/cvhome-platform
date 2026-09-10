@@ -112,6 +112,35 @@ locals {
   }
 
   docker_registry = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.region}.amazonaws.com/${var.project}"
+
+  # ------------------------------------------------------------ database connections
+  #
+  # Every Spring service with a database holds up to db_pool_size connections per task,
+  # and a rolling deploy runs the old and the new task side by side. Where the default
+  # pod shares store-core's instance, both layers' pools land on it.
+  shared_database = local.flavour.rds.shared
+
+  # What RDS for PostgreSQL allows, rounded down: LEAST(DBInstanceClassMemory/9531392,
+  # 5000), where DBInstanceClassMemory is what is left after RDS takes its own share.
+  # Hence about 80 on a t4g.micro, not the 110 the nominal gigabyte suggests.
+  db_connection_limits = {
+    "db.t4g.micro"  = 80
+    "db.t4g.small"  = 190
+    "db.t4g.medium" = 400
+  }
+
+  db_services = {
+    core = length([for svc in values(local.catalog.core) : svc if try(svc.database, false)])
+    pod  = length([for svc in values(local.catalog.pod) : svc if try(svc.database, false)])
+  }
+
+  # The busiest instance, mid-deploy, at the flavour's task floor.
+  db_connections_at_deploy = 2 * local.flavour.rds.db_pool_size * (
+    local.flavour.autoscaling.enabled ? try(local.flavour.autoscaling.min, local.flavour.desired_count) : local.flavour.desired_count
+    ) * (
+    local.shared_database ? local.db_services.core + local.db_services.pod : max(local.db_services.core, local.db_services.pod)
+  )
+  db_connection_limit = lookup(local.db_connection_limits, local.flavour.rds.instance_class, null)
 }
 
 # B2/B3: fail at plan time, with a sentence, rather than mid-apply with an AWS error.
@@ -143,6 +172,14 @@ resource "terraform_data" "guards" {
     precondition {
       condition     = local.prereq.app_domain == local.app_domain
       error_message = "The certificate in the prereq state covers '${local.prereq.app_domain}', but this environment serves '${local.app_domain}'. Re-apply prereq first."
+    }
+    # Hikari's default pool of 10 once exhausted a t4g.micro mid-deploy, and tasks died
+    # on "remaining connection slots are reserved" before passing a health check. One
+    # instance serving two layers makes that easier to reach, so it is checked here.
+    # Classes missing from db_connection_limits are not checked.
+    precondition {
+      condition     = local.db_connection_limit == null || local.db_connections_at_deploy <= coalesce(local.db_connection_limit, 0)
+      error_message = "A rolling deploy would open ${local.db_connections_at_deploy} connections on one ${local.flavour.rds.instance_class}, which holds about ${coalesce(local.db_connection_limit, 0)}. Lower rds.db_pool_size or raise rds.instance_class in flavour_overrides."
     }
   }
 }
@@ -292,6 +329,12 @@ module "store_pod" {
   test_stores      = var.test_stores
   postgres_version = var.postgres_version
   compute_enabled  = !var.hibernated
+
+  # Below prod the default pod uses store-core's database (flavour rds.shared). The
+  # bool keys a count inside the module, so it travels apart from the object, whose
+  # attributes are unknown until core's instance exists.
+  database_shared = local.shared_database && each.value.index == 0
+  shared_database = local.shared_database && each.value.index == 0 ? module.store_core.database : null
 }
 
 # ------------------------------------------------------------------------ dashboard
