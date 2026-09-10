@@ -78,6 +78,15 @@ one (`count` on the pod's instance and security group, with `moved` blocks); its
 core's security group. A root precondition keeps the pools of every service on one instance, doubled for a
 rolling deploy, under the class's connection limit. The dashboard skips a sharing pod's RDS widgets.
 
+## Phase 5 — prod plans again (commit 5)
+
+Found while verifying phase 3 and added at the user's request. `main.tf` and `prereq/main.tf` derived
+`dns_prefix = coalesce(var.dns_prefix, var.env == "prod" ? "" : var.env)`. `coalesce` skips empty strings
+as well as nulls, so prod's `""` was never returned and every prod plan failed in both roots with "no
+non-null, non-empty-string arguments". An explicit `dns_prefix = ""` below prod was also replaced by the
+environment name. Both roots now use a plain null check. Nothing changes for an environment that planned
+before: the value is the same wherever `coalesce` returned one.
+
 ## Other repos
 
 None. No port, image, environment variable name or SLO changes. cvhome already runs core and pod services
@@ -95,14 +104,12 @@ on one database under lcl.
 - **The connection guard covers every flavour's busiest instance, not only shared ones.** Staging comes to 84
   of 190 and prod to 168 of 190, so both pass.
 - **The QA file's case count was stale.** It said 15 while 17 cases existed; it now counts 24.
-- **Found while verifying, not fixed here (pre-existing):**
-  - `main.tf:60` and `prereq/main.tf:37` derive `dns_prefix` with
-    `coalesce(var.dns_prefix, var.env == "prod" ? "" : var.env)`. `coalesce` skips empty strings, so under
-    `env = "prod"` both roots fail with "no non-null, non-empty-string arguments": prod cannot plan today.
-    Introduced in a2a4972.
-  - On a first create under prod, `aws_appautoscaling_policy.requests` has a `count` that depends on the new
-    ALB's ARN suffix, which is unknown at plan time. A fresh prod environment cannot plan; an existing one
-    can, because its suffix is in state.
+- **Found while verifying:**
+  - `main.tf:60` and `prereq/main.tf:37` derived `dns_prefix` with `coalesce()`, so no prod plan could
+    succeed (introduced in a2a4972). **Fixed in phase 5**, at the user's request, in this same PR.
+  - Not fixed (pre-existing): on a first create under prod, `aws_appautoscaling_policy.requests` has a
+    `count` that depends on the new ALB's ARN suffix, which is unknown at plan time. A fresh prod
+    environment cannot plan; an existing one can, because its suffix is in state.
 - **Unchanged:** `bootstrap/bootstrap.yaml`'s flavour description, which is still true for prod ("prod runs
   tasks in private subnets behind a NAT gateway"). Leaving it avoids republishing the template for wording.
 
@@ -126,8 +133,16 @@ on one database under lcl.
   | staging | its own pod database, behind the NAT instance; 84 of 190 |
   | prod database | its own pod database; 168 of 190 |
 
-  Two scratch-only patches were needed to get a mocked plan at all, both for the pre-existing issues above:
-  the `dns_prefix` expression, and prod's `request_target`.
+  After phase 5 all eight pass against the committed code, and the prod run also asserts that prod owns the
+  bare apex. The one scratch-only patch left drops prod's `request_target`, for the first-create `count`
+  issue above.
+- **Phase 5, the `prereq` root under the same kind of mocked plan:**
+  - prod owns the bare apex (`dns_prefix = ""`, `app_domain` is the zone).
+  - dev sits under `dev.`.
+  - An explicit `dns_prefix = ""` is honoured.
+
+  Against `origin/main`'s `prereq/main.tf` the prod run fails with the `coalesce` error; against this branch
+  all three pass.
 - **User data rendered** with sample values: no interpolation left, `bash -n` clean.
 - **The readiness gate's loop,** run against a stub `aws`: marker on the third poll gives exit 0; never
   gives exit 1 with the message.

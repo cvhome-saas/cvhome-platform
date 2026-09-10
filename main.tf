@@ -57,7 +57,11 @@ locals {
   # were env-independent, so dev and prod fought over identical Route53 records and the
   # last apply won. Derived the same way in the prereq root, which mints the matching
   # certificate; the value it used is echoed back here as a cross-check.
-  dns_prefix = coalesce(var.dns_prefix, var.env == "prod" ? "" : var.env)
+  #
+  # Not coalesce(): it skips empty strings as well as nulls, so prod's "" was never
+  # returned and every prod plan failed with "no non-null, non-empty-string arguments",
+  # and an explicit dns_prefix = "" was silently replaced by the environment name.
+  dns_prefix = var.dns_prefix != null ? var.dns_prefix : (var.env == "prod" ? "" : var.env)
   app_domain = local.dns_prefix == "" ? data.aws_route53_zone.this.name : "${local.dns_prefix}.${data.aws_route53_zone.this.name}"
   # No "latest" fallback: an environment deploys the product version named in its
   # tfvars (or, before the first promotion PR, the one the bootstrap wrote to SSM).

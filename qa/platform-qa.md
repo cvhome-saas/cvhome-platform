@@ -92,8 +92,9 @@ none was recorded against this script, so none is marked verified.
 ### 03.3 `latest` is refused for a protected flavour [not verified]
 - Setup: `envs/prod.tfvars` with `image_tag = "latest"` on a branch.
 - Steps: open a PR; also push a `v*` tag on a throwaway fork.
-- Expect: the plan fails on the precondition in `main.tf`; the `release-guard` job fails on the tag; a
-  `dev` tfvars with `latest` still passes.
+- Expect: the plan fails on the precondition in `main.tf`, with its own message about `image_tag` and not
+  a `coalesce` error (see REG); the `release-guard` job fails on the tag; a `dev` tfvars with `latest`
+  still passes; with a released version in `envs/prod.tfvars` the same plan succeeds.
 
 ## 04 — Hibernate and wake
 
@@ -239,6 +240,9 @@ Defects that already shipped once in the legacy repos or during this repo's deve
 - A stopped RDS that AWS restarts on day eight (04.2).
 - The destroy project unable to delete the roles it created (05.1).
 - Four services with no ECR repository at all (02.1: count is 15, and `check-catalog-drift.py` in CI).
+- Every `prod` plan failed, in both roots, with "no non-null, non-empty-string arguments": `dns_prefix`
+  went through `coalesce()`, which skips prod's `""` as well as nulls. It failed before any precondition
+  could speak, so 03.3 would have "passed" for the wrong reason (03.3, and any prod plan).
 
 ## 99 — known gaps
 

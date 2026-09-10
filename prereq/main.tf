@@ -34,7 +34,11 @@ locals {
   # Environments must not share hostnames. Below prod every host sits under an
   # env-scoped label, so dev and prod can share one hosted zone without fighting over
   # the same Route53 records. prod owns the bare apex.
-  dns_prefix = coalesce(var.dns_prefix, var.env == "prod" ? "" : var.env)
+  #
+  # Not coalesce(): it skips empty strings as well as nulls, so prod's "" was never
+  # returned and every prod plan failed with "no non-null, non-empty-string arguments".
+  # The env root derives this with the same expression.
+  dns_prefix = var.dns_prefix != null ? var.dns_prefix : (var.env == "prod" ? "" : var.env)
 
   # Every image the application build publishes, from the one catalog. The legacy
   # template listed 11 by hand and was missing six — which is why the build failed
