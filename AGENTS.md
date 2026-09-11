@@ -40,7 +40,9 @@ main.tf variables.tf outputs.tf backend.tf versions.tf   the environment root
 creates the state bucket, a scoped deploy role and the CodeBuild projects, then starts the line:
 `1-prereq` (ECR + ACM from the catalog) → `2-images` (`bootBuildImage --publishImage -Pversion=$IMAGE_TAG`
 in `../cvhome`) → `3-apply` (`terraform apply`). Each stage starts the next only on success. Companion
-projects: `-hibernate`, `-wake` (`scripts/hibernate.sh` / `wake.sh` do the same from a laptop) and
+projects: `-2-images-native` (the same images with the Spring services as GraalVM native executables,
+`-Pnative` on XLARGE; only ever started by hand, then `3-apply` — the line's default stays the JVM build),
+`-hibernate`, `-wake` (`scripts/hibernate.sh` / `wake.sh` do the same from a laptop) and
 `-destroy`. **CodeBuild is the deployer; GitHub Actions only validates**
 (`.github/workflows/terraform-validate.yml`: fmt, validate per root and module, tflint, catalog drift,
 cfn-lint + cfn-guard, a `plan (dev)` comment on same-repo PRs via OIDC, and `release-guard` on `v*` tags).

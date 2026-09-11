@@ -35,6 +35,16 @@ One click, then wait.
    Each stage starts the next only on success, so a failure stops the line instead of
    racing ahead to an apply that cannot work.
 
+   `2-images` builds JVM images, and it is the only image build the line ever starts.
+   **Native images are opt-in:** start the `-2-images-native` project by hand (CodeBuild
+   console → *Start build*, or `aws codebuild start-build --project-name
+   <project>-<env>-2-images-native`; the stack's `NativeImageProject` output names it). It
+   builds the same 15 images with the twelve Spring services as GraalVM native executables
+   (`-Pnative`: sub-second start, a fraction of the memory) and then runs `3-apply`. Both
+   builds publish the same tags, so the last one to run is what the environment runs; start
+   `2-images` to go back to the JVM. Not while the line is running — two image builds would
+   race for the tags, and two applies for the state lock.
+
 4. `terraform output console_url` tells you where to sign in.
 
 To tear it down, run the `-destroy` CodeBuild project.

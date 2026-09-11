@@ -719,6 +719,83 @@ Resources:
       SourceVersion: !If [ImageTagIsVersion, !Sub "v${ImageTag}", !Ref Branch]
       TimeoutInMinutes: 120
 
+  # The same image build with the twelve Spring services compiled as GraalVM native
+  # executables (cvhome: bootBuildImage -Pnative, references/build-system.md). Nothing in
+  # the pipeline starts it: 2-images above, the JVM build, is the default. Start this one
+  # by hand when an environment should run native; on success it provisions the
+  # environment like 2-images does (NativeImagesSucceededRule). Both publish the same
+  # names and tags, so whichever ran last is what the environment runs; start 2-images to
+  # go back to the JVM. Do not start it while the pipeline is running: the two builds
+  # would race for the tags and their applies for the state lock.
+  #
+  # Machine: on a 14-core laptop one service compiles in 52 s to 1m37s and the largest
+  # (payment) peaks at 11.9 GB of compiler heap; at 7 GB it runs out. LARGE's 15 GB could
+  # run them only one at a time. XLARGE (36 vCPU, 70 GB) runs four at once with each
+  # compiler capped at 12 GB (-PnativeImageArgs): 4 x ~13.5 GB resident leaves room for
+  # Gradle (-Xmx10g) and Docker. The laptop built the twelve in 17 minutes three at a
+  # time; the first CodeBuild run is the number to put here, with the host's peak memory.
+  NativeImageBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${ProjectId}-${EnvName}-2-images-native"
+      Description: Build and push all 15 service images with the Spring services as GraalVM native executables, started by hand
+      ServiceRole: !GetAtt BuildRole.Arn
+      Artifacts: { Type: NO_ARTIFACTS }
+      Cache:
+        Type: LOCAL
+        Modes:
+          - LOCAL_DOCKER_LAYER_CACHE
+          - LOCAL_CUSTOM_CACHE
+          - LOCAL_SOURCE_CACHE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_XLARGE
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - { Name: PROJECT_ID, Value: !Ref ProjectId }
+          - { Name: IMAGE_TAG, Value: !Ref ImageTag }
+          - Name: REGISTRY
+            Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ProjectId}"
+          - Name: GRADLE_OPTS
+            Value: >-
+              -Dorg.gradle.jvmargs=-Xmx10g
+              -Dorg.gradle.daemon=false
+              -Dorg.gradle.parallel=true
+              -Dorg.gradle.caching=true
+      Source:
+        Type: GITHUB
+        Location: !Sub "https://github.com/${GithubAccount}/${AppRepo}.git"
+        # 2-images' buildspec with -Pnative and the compiler cap. A cvhome version
+        # older than its native build ignores both flags and builds JVM images.
+        BuildSpec: |
+          version: 0.2
+          cache:
+            paths:
+              - "/root/.gradle/caches/**/*"
+              - "/root/.gradle/wrapper/**/*"
+          phases:
+            install:
+              runtime-versions:
+                java: corretto25
+            pre_build:
+              commands:
+                - export ECR_TOKEN=$(aws ecr get-login-password --region $AWS_REGION)
+                - echo "$ECR_TOKEN" | docker login --username AWS --password-stdin "${REGISTRY%%/*}"
+            build:
+              commands:
+                - chmod +x gradlew
+                - |
+                  VERSION_FLAG=""
+                  if [ "$IMAGE_TAG" != "latest" ]; then
+                    VERSION_FLAG="-Pversion=$IMAGE_TAG"
+                  fi
+                  echo "Publishing native images as ${IMAGE_TAG} from $(git rev-parse --short HEAD 2>/dev/null || echo "$CODEBUILD_RESOLVED_SOURCE_VERSION")"
+                  ./gradlew bootBuildImage --publishImage -Pnative -PnativeImageArgs=-J-Xmx12g $VERSION_FLAG \
+                    -x test -x check --no-daemon --parallel --max-workers=4 --build-cache
+      SourceVersion: !If [ImageTagIsVersion, !Sub "v${ImageTag}", !Ref Branch]
+      TimeoutInMinutes: 120
+
   EnvProject:
     Type: AWS::CodeBuild::Project
     Properties:
@@ -1125,6 +1202,23 @@ Resources:
           Arn: !GetAtt EnvProject.Arn
           RoleArn: !GetAtt PipelineChainRole.Arn
 
+  # The hand-started native build ends the same way: the environment is re-applied, and
+  # below the protected flavours every apply redeploys, so the tasks pull what was pushed.
+  NativeImagesSucceededRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: native images pushed -> provision the environment
+      EventPattern:
+        source: [aws.codebuild]
+        detail-type: ["CodeBuild Build State Change"]
+        detail:
+          build-status: [SUCCEEDED]
+          project-name: [!Ref NativeImageBuildProject]
+      Targets:
+        - Id: apply
+          Arn: !GetAtt EnvProject.Arn
+          RoleArn: !GetAtt PipelineChainRole.Arn
+
 Outputs:
   ProjectId:
     Description: Use this same id for every environment in this account
@@ -1144,6 +1238,10 @@ Outputs:
   Registry:
     Description: REGISTRY for the application's own publish workflow
     Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ProjectId}"
+
+  NativeImageProject:
+    Description: Start this CodeBuild project to build native images and re-apply; 2-images builds the default JVM ones
+    Value: !Ref NativeImageBuildProject
 
   ConfigParameterName:
     Description: Where the app's publish workflow reads the project id from

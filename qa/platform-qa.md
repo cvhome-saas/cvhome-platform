@@ -58,6 +58,25 @@ none was recorded against this script, so none is marked verified.
   `latest` for a release; `latest` only for a branch build); the build log shows
   `bootBuildImage --publishImage`; the Gradle cache made the second run visibly faster; `3-apply` started.
 
+### 02.2b `2-images-native` — started by hand, it ships the Spring services native and re-applies [not verified]
+- Setup: an environment the line has run through (02.3), on a `cvhome` version that carries the native build
+  (cvhome-saas/cvhome#349).
+- Steps:
+  1. The line never starts it: in 02.2's log `bootBuildImage` has no `-Pnative`, and `<project>-<env>-2-images-native`
+     has no build history.
+  2. Start `<project>-<env>-2-images-native` (console → *Start build*, or `aws codebuild start-build --project-name
+     <project>-<env>-2-images-native`). Read its log; note the duration and the host's peak memory.
+  3. When it succeeds `3-apply` starts by itself. After it, `docker pull` one Spring image (`store-pod/catalog`) and
+     `docker run --rm --entrypoint sh <image> -c 'ls /workspace'`; read a task's first log line and `Started ... in`.
+  4. Start `2-images` by hand; after its `3-apply`, repeat step 3's image check.
+- Expect: the log shows `BP_NATIVE_IMAGE=true` for the twelve Spring services and four native-image builds at a time,
+  none killed for memory, inside `TimeoutInMinutes: 120` with room (record the duration here and in the project's
+  comment in `bootstrap.yaml`); `/workspace` holds a single executable, no `BOOT-INF`; the task starts in about a second
+  where the JVM took tens of seconds; the three Node/Caddy images are as 02.2 built them. After step 4 the image is a
+  JVM image again (`BOOT-INF`, `JarLauncher`).
+- Expected to fail: a `cvhome` version older than the native build ignores `-Pnative` and ships JVM images — correct,
+  not a failure. Started while the line is running, the two applies race for the state lock: do not.
+
 ### 02.3 `3-apply` — the environment converges and the console answers [not verified]
 - Setup: 02.2.
 - Steps: wait for `3-apply`; `terraform output console_url` from the build log; open it; sign in with the
