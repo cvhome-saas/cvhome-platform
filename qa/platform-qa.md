@@ -6,7 +6,7 @@ The path an operator takes to stand up, change, pause and tear down a CVHome env
 - **Scope** — the bootstrap stack, the three CodeBuild stages, promotion by tfvars, hibernate/wake, destroy.
 - **Runs on** — a real AWS account and a Route53 hosted zone; eu-central-1 unless stated. Nothing here
   runs from an agent session (`AGENTS.md` → *Build, run and verify*).
-- **Cases** — 24 (0 verified, 24 not verified)
+- **Cases** — 25 (0 verified, 25 not verified)
 - **Also see** — `../cvhome/qa/lcl-qa.md` for the stack itself, `../cvhome/store-core/*/qa/*-qa.md` for the
   product flows to run once an environment is up; `README.md` here for the commands.
 
@@ -246,6 +246,24 @@ none was recorded against this script, so none is marked verified.
   rolling deploy would open 88 connections on one db.t4g.micro, which holds about 80"; the staging plan
   keeps both instances; the prod plan shows the pod instance and security group only as `moved` to
   `[0]`, with no change to either.
+
+## 08 — Storefront capacity
+
+### 08.1 The storefront runs on its own size and scales on CPU, dev included [not verified]
+- Setup: a `dev` environment applied from this change; `../load-testing` with its committed `aws.json`.
+- Steps: `aws ecs describe-task-definition` for `<project>-dev-store-pod-507f1f77-landing-ui` (latest
+  revision) and for console-ui; `aws application-autoscaling describe-scalable-targets --service-namespace ecs`
+  and `describe-scaling-policies`, filtered to landing-ui; then, from `../load-testing`, `make aws-up` and
+  `TARGET=aws STORES=org1-store2 make storefront-browse PROFILE=load PEAK_VUS=30 DURATION=10m`, watching the
+  service's running count and CPU in CloudWatch.
+- Expect: landing-ui's task is 512 CPU / 1024 MB; console-ui's stays 256 / 512. landing-ui has a scalable
+  target with min 1 and max 3 and one target-tracking policy on `ECSServiceAverageCPUUtilization` at 55, no
+  memory policy; no other dev service has a scalable target. Under the test the service scales out within a
+  few minutes of CPU passing 55 % and back in after the scale-in cooldown (300 s). A staging plan of the same
+  commit shows landing-ui's policy target 75 → 55 and its task 512 / 1024 unchanged; a prod plan shows the
+  target unchanged at 55 and no memory policy.
+- Also: `scripts/hibernate.sh dev` removes the landing-ui scalable target with the service, and wake restores
+  both (hibernation destroys the services rather than scaling them to zero, so a floor of 1 cannot wake it).
 
 ## REG — regression watchlist
 

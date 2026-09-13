@@ -175,14 +175,21 @@ pod:
     image: store-pod/landing-ui
     database: false
     runtime: node
-    size: ui
+    # Its own size, apart from the console's `ui`: see `ssr` in flavours.yaml.
+    size: ssr
     # Its own build output to the pod's CDN, not tenant media: the STATIC_ASSETS_* keys
     # rather than the COM_ASREVO_CVHOME_CDN_* ones `cdn: true` hands the Spring services.
     static_assets: true
-    # Server-side rendering is CPU-bound and has no JVM heap to pressure, so memory
-    # tracking only adds a policy that never fires. The floor stays the flavour's:
-    # dropping prod to a single task would trade real availability for one task-hour.
+    # Server-side rendering is CPU-bound, and one saturated task queues every page behind
+    # it, so the storefront scales on CPU even where the flavour does not: in dev and
+    # ephemeral, which set no min or max, that is 1 to 3 tasks (desired_count, and
+    # desired_count x 3). 55 is prod's own target: requests queue long before a
+    # rendering task reads 75 %. There is no JVM heap to pressure, so memory tracking
+    # only adds a policy that never fires. The floor stays the flavour's: dropping prod
+    # to a single task would trade real availability for one task-hour.
     autoscaling:
+      enabled: true
+      cpu_target: 55
       memory_target: null
     extra_env:
       INTERNAL_SPG: "http://spg.${namespace}:${ports.spg}"

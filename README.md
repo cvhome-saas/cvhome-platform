@@ -246,6 +246,13 @@ Setting a key to `null` switches that metric off for one service even when the f
 sets it: `spg` sits behind a network load balancer, which publishes no per-target
 request count, so it takes `request_target: null` and scales on CPU alone.
 
+A service can also switch scaling on where its flavour leaves it off. `landing-ui` renders
+every storefront page on the server, and one saturated task queues every page behind it (a
+30-shopper test on dev held its quarter-vCPU task at 100 % with pages at 21–24 s), so it
+takes `enabled: true` and `cpu_target: 55`, on its own `ssr` size. In `dev` and `ephemeral`,
+which set no `min` or `max`, that is 1 to 3 tasks: the floor is `desired_count` and the
+ceiling `desired_count × 3`.
+
 Every policy is optional. Where several are active they run together and the highest
 wins — whichever signal saturates first adds capacity.
 

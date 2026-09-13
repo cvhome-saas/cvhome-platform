@@ -20,6 +20,12 @@
 # The legacy stack gave all 15 services an identical 512/1024, which is the single
 # largest easy cost win — and because pod services are billed once per pod, the saving
 # multiplies by pod count.
+#
+# `ssr` is the storefront's own size (landing-ui), apart from `ui`, which the console keeps.
+# The storefront renders every page on the server: about 200 ms of CPU a page as measured
+# on 2026-09-13, so a quarter vCPU saturates near 1.2 pages a second, and a 30-shopper load
+# test on dev held its task at 100 % with pages at 21–24 s. The console renders in the
+# browser and idled through the same test, so raising `ui` would pay for nothing.
 
 dev:
   description: "Cheapest thing that runs the whole product. Not for anyone's data."
@@ -28,8 +34,10 @@ dev:
     medium:  { cpu: 512, memory: 1024 }
     small:   { cpu: 256, memory: 1024 }
     ui:      { cpu: 256, memory: 512 }
+    ssr:     { cpu: 512, memory: 1024 }
   desired_count: 1
-  # No autoscaling below staging: one task, the cheapest thing that runs.
+  # No autoscaling below staging: one task, the cheapest thing that runs. The storefront
+  # is the exception: landing-ui turns scaling on for itself (services.yaml).
   autoscaling:
     enabled: false
     schedules: []
@@ -102,6 +110,7 @@ staging:
     medium:  { cpu: 512, memory: 1024 }
     small:   { cpu: 256, memory: 1024 }
     ui:      { cpu: 512, memory: 1024 }
+    ssr:     { cpu: 512, memory: 1024 }
   desired_count: 1
   # Autoscaling on, cheaply — enough to prove the policy works before prod relies on it.
   autoscaling:
@@ -183,6 +192,7 @@ prod:
     medium:  { cpu: 1024, memory: 2048 }
     small:   { cpu: 512,  memory: 1024 }
     ui:      { cpu: 512,  memory: 1024 }
+    ssr:     { cpu: 512,  memory: 1024 }
   desired_count: 2
   # Scale out fast, scale in slowly. A minute of over-provisioning costs pennies;
   # flapping under a rising load costs requests. Request-count tracking leads CPU on
@@ -253,8 +263,10 @@ ephemeral:
     medium:  { cpu: 256, memory: 1024 }
     small:   { cpu: 256, memory: 1024 }
     ui:      { cpu: 256, memory: 512 }
+    ssr:     { cpu: 256, memory: 512 }
   desired_count: 1
-  # Throwaway environments do not autoscale; they are destroyed instead.
+  # Throwaway environments do not autoscale; they are destroyed instead. The storefront
+  # still scales 1–3 on CPU (services.yaml, landing-ui), so a demo under load stays usable.
   autoscaling:
     enabled: false
     schedules: []
