@@ -6,7 +6,7 @@ The path an operator takes to stand up, change, pause and tear down a CVHome env
 - **Scope** — the bootstrap stack, the three CodeBuild stages, promotion by tfvars, hibernate/wake, destroy.
 - **Runs on** — a real AWS account and a Route53 hosted zone; eu-central-1 unless stated. Nothing here
   runs from an agent session (`AGENTS.md` → *Build, run and verify*).
-- **Cases** — 30 (0 verified, 30 not verified)
+- **Cases** — 31 (0 verified, 31 not verified)
 - **Also see** — `../cvhome/qa/lcl-qa.md` for the stack itself, `../cvhome/store-core/*/qa/*-qa.md` for the
   product flows to run once an environment is up; `README.md` here for the commands.
 
@@ -315,6 +315,18 @@ plan is cvhome-saas/orchestrator `.agents/plans/load-bottlenecks.md`).
   landing-ui 1 / 3. The override fails at plan time with "… the database services would open 192
   connections on one db.t4g.small, which holds about 190". Under the spike no database service passes its
   ceiling, and the pod instance's connections stay under 104 (staging's figure; prod's is 176).
+
+### 09.4 A campaign schedule raises the edge's floor before the doors open [not verified]
+- Setup: a `staging` environment; on a branch, `envs/staging.tfvars` with `flavour_overrides` whose
+  `autoscaling` is staging's block plus the prod example's two `at()` actions, set 15 and 45 minutes ahead
+  (and `min: 3` rather than 6, staging's max being 3).
+- Steps: plan and apply; `aws application-autoscaling describe-scheduled-actions --service-namespace ecs`;
+  watch the running counts across both times.
+- Expect: every service has the two actions. The edge services' actions carry min 3 and their own max (spg
+  and store-core-gateway 5, landing-ui and console-ui 3); the database services' carry min 1 and max 2,
+  catalog's min 1 and max 4. At the first time the edge services go to 3 tasks with no load and the
+  database services stay at 1; at the second everything returns to 1. A plan shows no change to any
+  scalable target once both have fired.
 
 ## REG — regression watchlist
 

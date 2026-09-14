@@ -236,6 +236,26 @@ prod:
     scale_out_cooldown: 60
     scale_in_cooldown: 600
     schedules: []
+    # Worked example, opt-in: capacity for a spike known in advance. Target tracking
+    # reacts in minutes (three one-minute datapoints over target, the metric's own lag,
+    # then a task's start and health-check grace), and the 2026-09-14 spikes were over in
+    # one, so the floor rises before the doors open and falls after. `max` is left out on
+    # purpose: every service keeps its own ceiling. The floor lands clamped (main.tf):
+    # spg, landing-ui, the gateway and the console run 6 tasks from the first minute;
+    # the database services keep their floor of 2, inside the connection budget, and
+    # catalog still scales to its 4 on CPU. `at()` fires once, in `timezone`. An apply
+    # inside the window puts the floor back to 2 until the next action, so do not
+    # deploy during a campaign; delete the pair once it is over.
+    #
+    # schedules:
+    #   - name: campaign-doors-open
+    #     schedule: "at(2026-11-27T07:30:00)"
+    #     timezone: Europe/Berlin
+    #     min: 6
+    #   - name: campaign-over
+    #     schedule: "at(2026-11-28T01:00:00)"
+    #     timezone: Europe/Berlin
+    #     min: 2
   # Is this environment precious? Drives load balancer deletion protection
   # and whether buckets may be force-destroyed — decisions that previously
   # rode on rds.deletion_protection, which is about something else.

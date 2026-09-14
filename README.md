@@ -285,7 +285,25 @@ too. A worked example sits commented out in the `staging` flavour.
 
 A schedule lands on every service and is clamped to each: never past the service's own
 ceiling, and never above a database service's floor, so the calendar can take a database
-service down but cannot lift it out of the connection budget.
+service down but cannot lift it out of the connection budget. A schedule may leave `max`
+out, and every service then keeps its own ceiling. That is the shape for a known event:
+target tracking needs minutes to add a task, and a one-minute spike is over first, so the
+floor goes up before the doors open and back down after:
+
+```yaml
+schedules:
+  - name: campaign-doors-open
+    schedule: "at(2026-11-27T07:30:00)"   # once; cron() repeats
+    timezone: Europe/Berlin
+    min: 6                               # spg, landing-ui, gateway, console: 6; database services keep 2
+  - name: campaign-over
+    schedule: "at(2026-11-28T01:00:00)"
+    timezone: Europe/Berlin
+    min: 2
+```
+
+It sits commented out in the `prod` flavour. An apply inside the window resets the floor
+until the next action, so a campaign is not the time to deploy.
 
 Where autoscaling is on, `desired_count` is the autoscaling minimum, so the flavour and
 the scaler cannot disagree about the floor and fight on every apply.

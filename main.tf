@@ -173,7 +173,8 @@ locals {
   # service it lands on: never past the service's own ceiling, and never above a database
   # service's floor. The calendar may lower a database service (to zero overnight, say)
   # but not raise it, since the budget below counts every database task at its floor or
-  # its ceiling and a schedule's numbers are neither.
+  # its ceiling and a schedule's numbers are neither. A schedule without a max leaves
+  # every service its own ceiling, which is what raising a floor for an event wants.
   services = {
     for layer, scaled in local.scaling : layer => {
       for name, sc in scaled : name => merge(local.catalog[layer][name], {
@@ -182,7 +183,7 @@ locals {
           schedules = [
             for sch in sc.schedules : merge(sch, {
               min = min(sch.min, local.database[layer][name] ? sc.min : sc.max)
-              max = min(sch.max, sc.max)
+              max = min(coalesce(try(sch.max, null), sc.max), sc.max)
             })
           ]
         })
