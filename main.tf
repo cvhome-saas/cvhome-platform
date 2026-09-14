@@ -117,11 +117,28 @@ locals {
 
   docker_registry = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.region}.amazonaws.com/${var.project}"
 
+  # ------------------------------------------------------------ per-service values
+  #
+  # What a service takes from the flavour unless its catalog entry says otherwise,
+  # resolved once here and handed to the layer modules on the catalog entry itself. The
+  # connection budget below counts exactly the numbers the modules deploy, so both read
+  # them from this one place rather than each deriving its own.
+  #
+  #   db_pool_size  Hikari's pool per task: the service's own, else rds.db_pool_size.
+  #                 Zero for a service with no database, so a sum needs no filter.
+  services = {
+    for layer in ["core", "pod"] : layer => {
+      for name, svc in local.catalog[layer] : name => merge(svc, {
+        db_pool_size = try(svc.database, false) ? try(svc.db_pool_size, local.flavour.rds.db_pool_size) : 0
+      })
+    }
+  }
+
   # ------------------------------------------------------------ database connections
   #
-  # Every Spring service with a database holds up to db_pool_size connections per task,
-  # and a rolling deploy runs the old and the new task side by side. Where the default
-  # pod shares store-core's instance, both layers' pools land on it.
+  # Every Spring service with a database holds up to its db_pool_size connections per
+  # task, and a rolling deploy runs the old and the new task side by side. Where the
+  # default pod shares store-core's instance, both layers' pools land on it.
   shared_database = local.flavour.rds.shared
 
   # What RDS for PostgreSQL allows, rounded down: LEAST(DBInstanceClassMemory/9531392,
@@ -133,16 +150,16 @@ locals {
     "db.t4g.medium" = 400
   }
 
-  db_services = {
-    core = length([for svc in values(local.catalog.core) : svc if try(svc.database, false)])
-    pod  = length([for svc in values(local.catalog.pod) : svc if try(svc.database, false)])
+  # One task of every database service in a layer, pools summed.
+  db_pools = {
+    for layer, services in local.services : layer => sum(concat([0], [for svc in values(services) : svc.db_pool_size]))
   }
 
   # The busiest instance, mid-deploy, at the flavour's task floor.
-  db_connections_at_deploy = 2 * local.flavour.rds.db_pool_size * (
+  db_connections_at_deploy = 2 * (
     local.flavour.autoscaling.enabled ? try(local.flavour.autoscaling.min, local.flavour.desired_count) : local.flavour.desired_count
     ) * (
-    local.shared_database ? local.db_services.core + local.db_services.pod : max(local.db_services.core, local.db_services.pod)
+    local.shared_database ? local.db_pools.core + local.db_pools.pod : max(local.db_pools.core, local.db_pools.pod)
   )
   db_connection_limit = lookup(local.db_connection_limits, local.flavour.rds.instance_class, null)
 }
@@ -183,7 +200,7 @@ resource "terraform_data" "guards" {
     # Classes missing from db_connection_limits are not checked.
     precondition {
       condition     = local.db_connection_limit == null || local.db_connections_at_deploy <= coalesce(local.db_connection_limit, 0)
-      error_message = "A rolling deploy would open ${local.db_connections_at_deploy} connections on one ${local.flavour.rds.instance_class}, which holds about ${coalesce(local.db_connection_limit, 0)}. Lower rds.db_pool_size or raise rds.instance_class in flavour_overrides."
+      error_message = "A rolling deploy would open ${local.db_connections_at_deploy} connections on one ${local.flavour.rds.instance_class}, which holds about ${coalesce(local.db_connection_limit, 0)}. Lower rds.db_pool_size (or a service's db_pool_size in services.yaml), or raise rds.instance_class in flavour_overrides."
     }
   }
 }
@@ -270,7 +287,7 @@ module "store_core" {
   env     = var.env
   region  = var.region
 
-  services       = local.catalog.core
+  services       = local.services.core
   otel_collector = local.catalog.infra["otel-collector"]
   flavour        = local.flavour
 
@@ -306,7 +323,7 @@ module "store_pod" {
   env     = var.env
   pod     = each.value
 
-  services = local.catalog.pod
+  services = local.services.pod
   flavour  = local.flavour
 
   domain         = local.app_domain

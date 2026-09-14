@@ -184,8 +184,9 @@ is a flavour key, so one environment can take it back with `flavour_overrides`.
   already share one Postgres under lcl. That is one db.t4g.micro and its storage instead
   of two, $13.98 a month. Other pods keep their own; their schemas would collide with
   the default pod's. The pod's services then hold store-core's master secret, so this
-  is for data that belongs to no one. The pools shrink to 3, and `main.tf` refuses a
-  plan whose rolling deploy would open more connections than the busiest instance holds.
+  is for data that belongs to no one. The pools shrink to 3 (catalog keeps its own 8,
+  `db_pool_size` in `services.yaml`), and `main.tf` refuses a plan whose rolling deploy
+  would open more connections than the busiest instance holds.
   Staging keeps prod's per-pod databases and its data.
 
 ## Dashboard

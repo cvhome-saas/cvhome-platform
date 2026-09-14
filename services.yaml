@@ -15,6 +15,11 @@
 #                create repositories on push, so a typo here fails the image build.
 #   database     true  -> receives SPRING_DATASOURCE_* env and the RDS password secret.
 #                false -> receives no datasource wiring at all.
+#   db_pool_size database services only. Hikari's pool per task, where this service needs
+#                other than the flavour's rds.db_pool_size. Like a target, a pool is a
+#                property of the workload, so it is a plain number that holds in every
+#                flavour; main.tf counts it into the connection budget, so a pool that does
+#                not fit the instance fails the plan instead of a deploy.
 #   runtime      spring | node. Picks the health path and the OTLP protocol/port
 #                (Spring services speak HTTP/4318; the Node UIs speak gRPC/4317).
 #   size         key into the flavour's size table. Right-sizing lives here.
@@ -223,6 +228,13 @@ pod:
     runtime: spring
     size: medium
     cdn: true
+    # Most storefront reads land here. In the 2026-09-14 production-mix spike 135 requests
+    # queued for catalog's 3 connections while PostgreSQL used 11 % of its CPU
+    # (load-testing docs/baseline.md, Heavy spikes). A wider pool pays only once a request
+    # stops holding its connection past its transaction: cvhome's half of the same plan
+    # turns open-in-view off and cuts the statements a request runs (orchestrator
+    # .agents/plans/load-bottlenecks.md). Without those, 8 would only move the queue.
+    db_pool_size: 8
 
   checkout:
     port: 8123

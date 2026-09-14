@@ -118,12 +118,18 @@ locals {
     { name = "SPRING_DATASOURCE_HOST", value = local.db.address },
     { name = "SPRING_DATASOURCE_PORT", value = tostring(local.db.port) },
     { name = "SPRING_DATASOURCE_USERNAME", value = local.db.username },
-    # Sized by the flavour to what the instance class can hold across every service in
-    # the layer, with a rolling deploy's brief doubling included. Hikari's default of 10
-    # exhausted a t4g.micro mid-deploy and tasks died on "remaining connection slots
-    # are reserved" before they could pass a health check.
-    { name = "SPRING_DATASOURCE_HIKARI_MAXIMUM-POOL-SIZE", value = tostring(var.flavour.rds.db_pool_size) },
   ]
+
+  # Hikari's pool per task, the service's own or the flavour's, as the root resolved it
+  # (db_pool_size on the catalog entry) and counted it against what the instance class
+  # holds, with a rolling deploy's brief doubling included. Hikari's default of 10
+  # exhausted a t4g.micro mid-deploy and tasks died on "remaining connection slots are
+  # reserved" before they could pass a health check.
+  pool_env = {
+    for name, svc in var.services : name => [
+      { name = "SPRING_DATASOURCE_HIKARI_MAXIMUM-POOL-SIZE", value = tostring(svc.db_pool_size) },
+    ]
+  }
 
   database_secret = [
     { name = "SPRING_DATASOURCE_PASSWORD", valueFrom = "${local.db.secret_arn}:password::" },
@@ -226,7 +232,7 @@ locals {
         svc.runtime == "caddy" ? local.caddy_env : [],
         try(svc.cdn, false) ? local.cdn_env : [],
         try(svc.static_assets, false) ? local.static_assets_env : [],
-        try(svc.database, false) ? local.database_env : [],
+        try(svc.database, false) ? concat(local.database_env, local.pool_env[name]) : [],
         # extra_env is rendered, not string-replaced: ${namespace} and ${ports.<svc>}
         # come from the catalog itself, so spg's merchant URL cannot drift from
         # merchant's declared port.
