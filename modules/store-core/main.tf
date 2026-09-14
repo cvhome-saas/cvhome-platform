@@ -111,12 +111,18 @@ locals {
     { name = "SPRING_DATASOURCE_HOST", value = aws_db_instance.this.address },
     { name = "SPRING_DATASOURCE_PORT", value = tostring(aws_db_instance.this.port) },
     { name = "SPRING_DATASOURCE_USERNAME", value = aws_db_instance.this.username },
-    # Sized by the flavour to what the instance class can hold across every service in
-    # the layer, with a rolling deploy's brief doubling included. Hikari's default of 10
-    # exhausted a t4g.micro mid-deploy and tasks died on "remaining connection slots
-    # are reserved" before they could pass a health check.
-    { name = "SPRING_DATASOURCE_HIKARI_MAXIMUM-POOL-SIZE", value = tostring(var.flavour.rds.db_pool_size) },
   ]
+
+  # Hikari's pool per task, the service's own or the flavour's, as the root resolved it
+  # (db_pool_size on the catalog entry) and counted it against what the instance class
+  # holds, with a rolling deploy's brief doubling included. Hikari's default of 10
+  # exhausted a t4g.micro mid-deploy and tasks died on "remaining connection slots are
+  # reserved" before they could pass a health check.
+  pool_env = {
+    for name, svc in var.services : name => [
+      { name = "SPRING_DATASOURCE_HIKARI_MAXIMUM-POOL-SIZE", value = tostring(svc.db_pool_size) },
+    ]
+  }
 
   database_secret = [
     { name = "SPRING_DATASOURCE_PASSWORD", valueFrom = "${aws_db_instance.this.master_user_secret[0].secret_arn}:password::" },
@@ -171,33 +177,10 @@ locals {
   ] : []
 
   # ------------------------------------------------------------------ per-service wiring
-
-  # Scaling policy per service: the flavour sets the environment's shape, the catalog
-  # overrides it where a service genuinely behaves differently. Resolved key by key
-  # rather than with merge(), so a service can override one target without restating
-  # the block — and so an omitted optional target stays omitted rather than becoming
-  # null-versus-absent guesswork downstream.
-  as_flavour = var.flavour.autoscaling
-
-  autoscaling = {
-    for name, svc in var.services : name => {
-      enabled = try(svc.autoscaling.enabled, local.as_flavour.enabled)
-      min     = try(svc.autoscaling.min, local.as_flavour.min, var.flavour.desired_count)
-      # Relative, so a service that needs headroom gets it in proportion to the
-      # environment rather than dragging a prod-sized ceiling into staging.
-      max = ceil(
-        try(local.as_flavour.max, var.flavour.desired_count * 3) *
-        try(svc.autoscaling.max_factor, 1)
-      )
-      cpu_target         = try(svc.autoscaling.cpu_target, local.as_flavour.cpu_target, null)
-      memory_target      = try(svc.autoscaling.memory_target, local.as_flavour.memory_target, null)
-      request_target     = try(svc.autoscaling.request_target, local.as_flavour.request_target, null)
-      scale_in_cooldown  = try(svc.autoscaling.scale_in_cooldown, local.as_flavour.scale_in_cooldown, 300)
-      scale_out_cooldown = try(svc.autoscaling.scale_out_cooldown, local.as_flavour.scale_out_cooldown, 60)
-      schedules          = try(svc.autoscaling.schedules, local.as_flavour.schedules, [])
-    }
-  }
-
+  #
+  # Each service's scaling policy arrives resolved on its catalog entry (`scaling`): the
+  # root works it out once from the flavour and the catalog, because its connection
+  # budget has to count the same ceilings this module deploys.
 
   services = {
     for name, svc in var.services : name => merge(svc, {
@@ -211,7 +194,7 @@ locals {
         svc.runtime == "spring" ? local.crypto_env : [],
         name == "uaa" ? local.uaa_seed_env : [],
         svc.runtime == "node" ? concat(local.node_env, [{ name = "OTEL_SERVICE_NAME", value = name }]) : [],
-        try(svc.database, false) ? local.database_env : [],
+        try(svc.database, false) ? concat(local.database_env, local.pool_env[name]) : [],
         try(svc.needs_pod_list, false) ? local.pod_list_env : [],
         [for k, v in try(svc.extra_env, {}) : { name = k, value = v }],
       )
@@ -308,7 +291,7 @@ module "service" {
   cpu                        = each.value.size.cpu
   memory                     = each.value.size.memory
   desired_count              = var.flavour.desired_count
-  autoscaling                = local.autoscaling[each.key]
+  autoscaling                = each.value.scaling
   capacity                   = var.flavour.capacity
   force_new_deployment       = !var.flavour.protected
   health_check_grace_seconds = var.flavour.health_check_grace_seconds

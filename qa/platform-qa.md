@@ -6,7 +6,7 @@ The path an operator takes to stand up, change, pause and tear down a CVHome env
 - **Scope** — the bootstrap stack, the three CodeBuild stages, promotion by tfvars, hibernate/wake, destroy.
 - **Runs on** — a real AWS account and a Route53 hosted zone; eu-central-1 unless stated. Nothing here
   runs from an agent session (`AGENTS.md` → *Build, run and verify*).
-- **Cases** — 25 (0 verified, 25 not verified)
+- **Cases** — 31 (0 verified, 31 not verified)
 - **Also see** — `../cvhome/qa/lcl-qa.md` for the stack itself, `../cvhome/store-core/*/qa/*-qa.md` for the
   product flows to run once an environment is up; `README.md` here for the commands.
 
@@ -235,15 +235,16 @@ none was recorded against this script, so none is marked verified.
   `SPRING_DATASOURCE_HOST` is the core instance and their password comes from its master secret; the core
   security group admits every core and pod service on 5432 (the pod rules say `Postgres from pod-507f1f77
   <service>`); the storefront and the console work; peak connections during the redeploy stay under 80
-  (the guard's figure: eleven services × 3 × 2 = 66), with no "remaining connection slots are reserved" in
-  any service log; the pod section of the dashboard has no RDS widgets of its own.
+  (the guard's figure: (ten services × 3 + catalog's own 8) × 2 = 76), with no "remaining connection slots
+  are reserved" in any service log; the pod section of the dashboard has no RDS widgets of its own.
 
 ### 07.7 Other pods, staging and prod keep their own databases; the guard refuses an overflow [not verified]
 - Setup: a branch with `pod_ids = ["<24 random hex>"]` in `envs/dev.tfvars`; separately,
   `flavour_overrides = { rds = { db_pool_size = 4 } }`.
 - Steps: plan each; plan `staging` and `prod` from the same commit.
-- Expect: the second pod plans its own `aws_db_instance`; the pool override fails at plan time with "A
-  rolling deploy would open 88 connections on one db.t4g.micro, which holds about 80"; the staging plan
+- Expect: the second pod plans its own `aws_db_instance`; the pool override fails at plan time with "At
+  their ceilings, or mid-deploy at their floors, the database services would open 96 connections on one
+  db.t4g.micro, which holds about 80"; the staging plan
   keeps both instances; the prod plan shows the pod instance and security group only as `moved` to
   `[0]`, with no change to either.
 
@@ -264,6 +265,68 @@ none was recorded against this script, so none is marked verified.
   target unchanged at 55 and no memory policy.
 - Also: `scripts/hibernate.sh dev` removes the landing-ui scalable target with the service, and wake restores
   both (hibernation destroys the services rather than scaling them to zero, so a floor of 1 cannot wake it).
+
+### 08.2 Prod's storefront renders on a whole vCPU [not verified]
+- Setup: the change on a branch; a `prod` plan (CI's plan job, or a CodeBuild `3-apply` in a prod account
+  with the plan read before apply).
+- Steps: read the plan for `<project>-prod-store-pod-<pod>-landing-ui`'s task definition; after the apply,
+  `aws ecs describe-task-definition` for it.
+- Expect: landing-ui's task goes 512 / 1024 → 1024 CPU / 2048 MB in prod and nowhere else (dev and staging keep
+  512 / 1024, ephemeral 256 / 512); console-ui's `ui` task is unchanged. Its scaling (2 to 12 at 55 % CPU) is
+  unchanged, so at 70 ms a page a task reaches its target near 8 page views a second instead of 4, and
+  saturates near 14 instead of 7.
+
+## 09 — Spike capacity and the connection budget
+
+What the 2026-09-14 heavy spikes asked of the platform (load-testing `docs/baseline.md` → *Heavy spikes*; the
+plan is cvhome-saas/orchestrator `.agents/plans/load-bottlenecks.md`).
+
+### 09.1 uaa runs on its own half-vCPU size in every flavour [not verified]
+- Setup: a `dev` environment applied from this change; `../load-testing` with its committed `aws.json`.
+- Steps: `aws ecs describe-task-definition` for `<project>-dev-store-core-uaa` (latest revision); plan
+  `staging`, `prod` and `ephemeral` from the same commit; then `TARGET=aws make platform-gateway-login PROFILE=load`
+  (the seller sign-in journey) against dev, watching uaa's CPU in CloudWatch.
+- Expect: uaa's task is 512 CPU / 1024 MB in dev, staging and ephemeral (was 256 / 1024); the prod plan shows no
+  change to uaa's task. The other `small` services keep 256 / 1024 below prod. At eight sign-ins a minute uaa
+  stays near 22 % of its CPU (half the 44 % it read at a quarter vCPU) and the sign-in p95 falls below the
+  3.15 s of 2026-09-13.
+
+### 09.2 catalog holds a pool of its own [not verified]
+- Setup: a `dev` environment applied from this change, with cvhome's half of the plan deployed (open-in-view
+  off, fewer statements per request); `../load-testing` with its committed `aws.json`.
+- Steps: `aws ecs describe-task-definition` for the default pod's catalog and for inventory; plan `staging` and
+  `prod`; then the production mix's spike, `TARGET=aws make mixed-production-mix PROFILE=spike`, against dev, watching `hikaricp_connections_pending` for
+  catalog in the load-testing Grafana (or catalog's log for `Connection is not available`).
+- Expect: catalog's `SPRING_DATASOURCE_HIKARI_MAXIMUM-POOL-SIZE` is 8 in every flavour; inventory's is the
+  flavour's (3 in dev and ephemeral, 6 in staging and prod); services with no database have no such variable.
+  The plans pass the guard (dev and ephemeral 76 of ~80 mid-deploy, staging 88 and prod 176 of ~190). Under
+  the spike catalog's pending connections stay well under the 135 of 2026-09-14 and no request waits out
+  Hikari's timeout.
+
+### 09.3 Database services stop at their ceiling, and the guard counts it [not verified]
+- Setup: the change on a branch; plans of `staging` and `prod` (CI's plan job or a CodeBuild plan); a
+  `staging` environment applied from it for the last step.
+- Steps: read each plan's `aws_appautoscaling_target` per service; then plan `prod` again with
+  `flavour_overrides = { rds = { db_max_tasks = 3 } }`; then, on staging, run the production mix's spike
+  (`TARGET=aws make mixed-production-mix PROFILE=spike`) and watch each service's running count and RDS
+  *DatabaseConnections* for the pod instance.
+- Expect: prod's database services have min 2 / max 2 and catalog min 2 / max 4; landing-ui, console-ui
+  2 / 12, spg and store-core-gateway 2 / 18 (unchanged). Staging's database services 1 / 2, catalog 1 / 4,
+  landing-ui 1 / 3. The override fails at plan time with "… the database services would open 192
+  connections on one db.t4g.small, which holds about 190". Under the spike no database service passes its
+  ceiling, and the pod instance's connections stay under 104 (staging's figure; prod's is 176).
+
+### 09.4 A campaign schedule raises the edge's floor before the doors open [not verified]
+- Setup: a `staging` environment; on a branch, `envs/staging.tfvars` with `flavour_overrides` whose
+  `autoscaling` is staging's block plus the prod example's two `at()` actions, set 15 and 45 minutes ahead
+  (and `min: 3` rather than 6, staging's max being 3).
+- Steps: plan and apply; `aws application-autoscaling describe-scheduled-actions --service-namespace ecs`;
+  watch the running counts across both times.
+- Expect: every service has the two actions. The edge services' actions carry min 3 and their own max (spg
+  and store-core-gateway 5, landing-ui and console-ui 3); the database services' carry min 1 and max 2,
+  catalog's min 1 and max 4. At the first time the edge services go to 3 tasks with no load and the
+  database services stay at 1; at the second everything returns to 1. A plan shows no change to any
+  scalable target once both have fired.
 
 ## REG — regression watchlist
 

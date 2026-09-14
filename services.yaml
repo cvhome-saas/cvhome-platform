@@ -15,6 +15,11 @@
 #                create repositories on push, so a typo here fails the image build.
 #   database     true  -> receives SPRING_DATASOURCE_* env and the RDS password secret.
 #                false -> receives no datasource wiring at all.
+#   db_pool_size database services only. Hikari's pool per task, where this service needs
+#                other than the flavour's rds.db_pool_size. Like a target, a pool is a
+#                property of the workload, so it is a plain number that holds in every
+#                flavour; main.tf counts it into the connection budget, so a pool that does
+#                not fit the instance fails the plan instead of a deploy.
 #   runtime      spring | node. Picks the health path and the OTLP protocol/port
 #                (Spring services speak HTTP/4318; the Node UIs speak gRPC/4317).
 #   size         key into the flavour's size table. Right-sizing lives here.
@@ -45,6 +50,11 @@
 #                memory target is a property of the workload and holds everywhere, so
 #                it is written as a plain number. Setting a key to `null` switches that
 #                metric off for this service even when the flavour sets it.
+#
+#                A service with a database multiplies from a lower base: the smaller of
+#                the flavour's max and rds.db_max_tasks, because every task it adds opens
+#                another pool on an instance whose connections do not grow. main.tf
+#                counts every database service at that ceiling against the instance.
 #   extra_env    the genuinely per-service keys. Everything shared is computed once
 #                in the module, never repeated here. Values are rendered with
 #                templatestring: ${namespace}, ${ports.<service>} and
@@ -83,7 +93,9 @@ core:
     image: store-core/uaa
     database: true
     runtime: spring
-    size: small
+    # Its own size, half a vCPU everywhere: a sign-in is a bcrypt check. See `auth` in
+    # flavours.yaml.
+    size: auth
     # The authorization server: every client secret it verifies and the key that
     # signs its remember-me cookie. The key wrapping its signing keys at rest is the
     # layer's crypto key, which every Spring service receives.
@@ -221,6 +233,18 @@ pod:
     runtime: spring
     size: medium
     cdn: true
+    # Most storefront reads land here. In the 2026-09-14 production-mix spike 135 requests
+    # queued for catalog's 3 connections while PostgreSQL used 11 % of its CPU
+    # (load-testing docs/baseline.md, Heavy spikes). A wider pool pays only once a request
+    # stops holding its connection past its transaction: cvhome's half of the same plan
+    # turns open-in-view off and cuts the statements a request runs (orchestrator
+    # .agents/plans/load-bottlenecks.md). Without those, 8 would only move the queue.
+    db_pool_size: 8
+    # The one database service that also ran out of CPU (91 % of its cap at 5x, 90 s at
+    # 100 % in the mix), so the one allowed past the database ceiling: twice it, which is
+    # 4 tasks in staging and prod. Its 8 x 4 is inside the budget main.tf checks.
+    autoscaling:
+      max_factor: 2
 
   checkout:
     port: 8123
