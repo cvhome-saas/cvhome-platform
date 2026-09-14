@@ -103,12 +103,18 @@ dev:
     # as they already do under lcl. Other pods keep their own; their schemas would
     # collide with the default pod's.
     shared: true
-    # Hikari maximum-pool-size per Spring task. RDS for PostgreSQL allows about 80
+    # Hikari maximum-pool-size per Spring task, unless a service sets its own
+    # (services.yaml db_pool_size; catalog takes 8). RDS for PostgreSQL allows about 80
     # connections on a t4g.micro and 190 on a t4g.small, once it has taken its own share
     # of the memory. A rolling deploy briefly doubles every service, and at Hikari's
-    # default of 10 the nine pod services alone asked for 180. Shared here, eleven
-    # database services at 3 make 66 mid-deploy; main.tf refuses a plan that overflows.
+    # default of 10 the nine pod services alone asked for 180. Shared here, ten database
+    # services at 3 and catalog at 8 make 76 mid-deploy; main.tf refuses a plan that
+    # overflows.
     db_pool_size: 3
+    # The most tasks a service with a database may scale to, whatever autoscaling.max
+    # says: pools multiply by tasks and the instance's connections do not. Scaling is off
+    # here, so every database service runs its one task and this binds nothing yet.
+    db_max_tasks: 1
     allocated_storage: 20
     max_allocated_storage: 0
     backup_retention_days: 0
@@ -187,11 +193,16 @@ staging:
     instance_class: db.t4g.small
     # Staging rehearses prod's per-pod database, and keeps its data.
     shared: false
-    # Hikari maximum-pool-size per Spring task. RDS for PostgreSQL allows about 80
+    # Hikari maximum-pool-size per Spring task, unless a service sets its own
+    # (services.yaml db_pool_size; catalog takes 8). RDS for PostgreSQL allows about 80
     # connections on a t4g.micro and 190 on a t4g.small, once it has taken its own share
     # of the memory. A rolling deploy briefly doubles every service, and at Hikari's
     # default of 10 the nine pod services alone asked for 180.
     db_pool_size: 6
+    # The most tasks a service with a database may scale to (catalog twice that, by its
+    # max_factor), prod's rule rehearsed: 1 to 2 tasks, catalog 1 to 4. The pod instance
+    # then peaks at 104 of ~190 connections; main.tf shows the arithmetic.
+    db_max_tasks: 2
     allocated_storage: 20
     max_allocated_storage: 100
     backup_retention_days: 1
@@ -259,11 +270,22 @@ prod:
     instance_class: db.t4g.small
     # Tenant data isolated at the instance boundary, one per pod (ADR-7).
     shared: false
-    # Hikari maximum-pool-size per Spring task. RDS for PostgreSQL allows about 80
+    # Hikari maximum-pool-size per Spring task, unless a service sets its own
+    # (services.yaml db_pool_size; catalog takes 8). RDS for PostgreSQL allows about 80
     # connections on a t4g.micro and 190 on a t4g.small, once it has taken its own share
     # of the memory. A rolling deploy briefly doubles every service, and at Hikari's
     # default of 10 the nine pod services alone asked for 180.
     db_pool_size: 6
+    # The most tasks a service with a database may scale to, whatever autoscaling.max
+    # says. Pools multiply by tasks and the instance's connections do not: with every
+    # service free to reach 12 tasks, one pod's seven database services could have asked
+    # for 7 x 6 x 12 = 504 connections of ~190 (the 2026-09-14 heavy spikes,
+    # load-testing docs/baseline.md). At 2, the floor, the database services hold still
+    # and catalog alone scales, to 4 (its max_factor); the instance peaks at 176 of ~190,
+    # mid-deploy. The stateless edge (spg, landing-ui, the gateway, the console) keeps
+    # scaling to 12 and beyond. If that stops being enough, the next step is RDS Proxy or
+    # a bigger instance class, not a bigger number here.
+    db_max_tasks: 2
     allocated_storage: 50
     max_allocated_storage: 500
     backup_retention_days: 7
@@ -320,10 +342,13 @@ ephemeral:
     instance_class: db.t4g.micro
     # One instance for store-core and the default pod, as in dev.
     shared: true
-    # Hikari maximum-pool-size per Spring task. RDS for PostgreSQL allows about 80
+    # Hikari maximum-pool-size per Spring task, unless a service sets its own
+    # (services.yaml db_pool_size; catalog takes 8). RDS for PostgreSQL allows about 80
     # connections on a t4g.micro, once it has taken its own share of the memory. Shared
-    # here, eleven database services at 3 make 66 mid-deploy.
+    # here, ten database services at 3 and catalog at 8 make 76 mid-deploy.
     db_pool_size: 3
+    # One task per database service, as in dev; scaling is off here anyway.
+    db_max_tasks: 1
     allocated_storage: 20
     max_allocated_storage: 0
     backup_retention_days: 0

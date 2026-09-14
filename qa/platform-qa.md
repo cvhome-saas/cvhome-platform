@@ -6,7 +6,7 @@ The path an operator takes to stand up, change, pause and tear down a CVHome env
 - **Scope** — the bootstrap stack, the three CodeBuild stages, promotion by tfvars, hibernate/wake, destroy.
 - **Runs on** — a real AWS account and a Route53 hosted zone; eu-central-1 unless stated. Nothing here
   runs from an agent session (`AGENTS.md` → *Build, run and verify*).
-- **Cases** — 29 (0 verified, 29 not verified)
+- **Cases** — 30 (0 verified, 30 not verified)
 - **Also see** — `../cvhome/qa/lcl-qa.md` for the stack itself, `../cvhome/store-core/*/qa/*-qa.md` for the
   product flows to run once an environment is up; `README.md` here for the commands.
 
@@ -242,8 +242,9 @@ none was recorded against this script, so none is marked verified.
 - Setup: a branch with `pod_ids = ["<24 random hex>"]` in `envs/dev.tfvars`; separately,
   `flavour_overrides = { rds = { db_pool_size = 4 } }`.
 - Steps: plan each; plan `staging` and `prod` from the same commit.
-- Expect: the second pod plans its own `aws_db_instance`; the pool override fails at plan time with "A
-  rolling deploy would open 96 connections on one db.t4g.micro, which holds about 80"; the staging plan
+- Expect: the second pod plans its own `aws_db_instance`; the pool override fails at plan time with "At
+  their ceilings, or mid-deploy at their floors, the database services would open 96 connections on one
+  db.t4g.micro, which holds about 80"; the staging plan
   keeps both instances; the prod plan shows the pod instance and security group only as `moved` to
   `[0]`, with no change to either.
 
@@ -301,6 +302,19 @@ plan is cvhome-saas/orchestrator `.agents/plans/load-bottlenecks.md`).
   The plans pass the guard (dev and ephemeral 76 of ~80 mid-deploy, staging 88 and prod 176 of ~190). Under
   the spike catalog's pending connections stay well under the 135 of 2026-09-14 and no request waits out
   Hikari's timeout.
+
+### 09.3 Database services stop at their ceiling, and the guard counts it [not verified]
+- Setup: the change on a branch; plans of `staging` and `prod` (CI's plan job or a CodeBuild plan); a
+  `staging` environment applied from it for the last step.
+- Steps: read each plan's `aws_appautoscaling_target` per service; then plan `prod` again with
+  `flavour_overrides = { rds = { db_max_tasks = 3 } }`; then, on staging, run the production mix's spike
+  (`TARGET=aws make mixed-production-mix PROFILE=spike`) and watch each service's running count and RDS
+  *DatabaseConnections* for the pod instance.
+- Expect: prod's database services have min 2 / max 2 and catalog min 2 / max 4; landing-ui, console-ui
+  2 / 12, spg and store-core-gateway 2 / 18 (unchanged). Staging's database services 1 / 2, catalog 1 / 4,
+  landing-ui 1 / 3. The override fails at plan time with "… the database services would open 192
+  connections on one db.t4g.small, which holds about 190". Under the spike no database service passes its
+  ceiling, and the pod instance's connections stay under 104 (staging's figure; prod's is 176).
 
 ## REG — regression watchlist
 

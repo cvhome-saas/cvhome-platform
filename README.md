@@ -254,6 +254,17 @@ takes `enabled: true` and `cpu_target: 55`, on its own `ssr` size. In `dev` and 
 which set no `min` or `max`, that is 1 to 3 tasks: the floor is `desired_count` and the
 ceiling `desired_count × 3`.
 
+A service with a database scales from a lower base. Pools multiply by tasks and an
+instance's connections do not: with every service free to reach prod's 12 tasks, one
+pod's seven database services could have asked for 7 × 6 × 12 = 504 connections of a
+db.t4g.small's ~190. So `rds.db_max_tasks` caps them (2 in staging and prod, where 2 is
+also prod's floor), `max_factor` multiplies that base rather than the flavour's max
+(catalog takes 2, so 4 tasks), and `main.tf` refuses a plan whose busiest instance would
+overflow with every database service at its ceiling or mid-deploy at its floor. A service
+may also set its own Hikari pool (`db_pool_size`; catalog 8), which the same check counts.
+The arithmetic for each flavour sits next to the check in `main.tf`; prod's pod instance
+peaks at 176.
+
 Every policy is optional. Where several are active they run together and the highest
 wins — whichever signal saturates first adds capacity.
 
@@ -271,6 +282,10 @@ schedules:
 Scaling to zero overnight keeps the URL and the load balancer alive while paying for no
 tasks — lighter than hibernating, which takes the load balancer and the database down
 too. A worked example sits commented out in the `staging` flavour.
+
+A schedule lands on every service and is clamped to each: never past the service's own
+ceiling, and never above a database service's floor, so the calendar can take a database
+service down but cannot lift it out of the connection budget.
 
 Where autoscaling is on, `desired_count` is the autoscaling minimum, so the flavour and
 the scaler cannot disagree about the floor and fight on every apply.

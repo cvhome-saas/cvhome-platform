@@ -50,6 +50,11 @@
 #                memory target is a property of the workload and holds everywhere, so
 #                it is written as a plain number. Setting a key to `null` switches that
 #                metric off for this service even when the flavour sets it.
+#
+#                A service with a database multiplies from a lower base: the smaller of
+#                the flavour's max and rds.db_max_tasks, because every task it adds opens
+#                another pool on an instance whose connections do not grow. main.tf
+#                counts every database service at that ceiling against the instance.
 #   extra_env    the genuinely per-service keys. Everything shared is computed once
 #                in the module, never repeated here. Values are rendered with
 #                templatestring: ${namespace}, ${ports.<service>} and
@@ -235,6 +240,11 @@ pod:
     # turns open-in-view off and cuts the statements a request runs (orchestrator
     # .agents/plans/load-bottlenecks.md). Without those, 8 would only move the queue.
     db_pool_size: 8
+    # The one database service that also ran out of CPU (91 % of its cap at 5x, 90 s at
+    # 100 % in the mix), so the one allowed past the database ceiling: twice it, which is
+    # 4 tasks in staging and prod. Its 8 x 4 is inside the budget main.tf checks.
+    autoscaling:
+      max_factor: 2
 
   checkout:
     port: 8123

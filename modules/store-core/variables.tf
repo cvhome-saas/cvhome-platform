@@ -11,7 +11,7 @@ variable "region" {
 }
 
 variable "services" {
-  description = "The `core` slice of services.yaml, each entry carrying the values the root resolved against the flavour (db_pool_size)."
+  description = "The `core` slice of services.yaml, each entry carrying the values the root resolved against the flavour (db_pool_size, scaling)."
   type        = any
 }
 
