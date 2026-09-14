@@ -6,7 +6,7 @@ The path an operator takes to stand up, change, pause and tear down a CVHome env
 - **Scope** — the bootstrap stack, the three CodeBuild stages, promotion by tfvars, hibernate/wake, destroy.
 - **Runs on** — a real AWS account and a Route53 hosted zone; eu-central-1 unless stated. Nothing here
   runs from an agent session (`AGENTS.md` → *Build, run and verify*).
-- **Cases** — 27 (0 verified, 27 not verified)
+- **Cases** — 28 (0 verified, 28 not verified)
 - **Also see** — `../cvhome/qa/lcl-qa.md` for the stack itself, `../cvhome/store-core/*/qa/*-qa.md` for the
   product flows to run once an environment is up; `README.md` here for the commands.
 
@@ -264,6 +264,16 @@ none was recorded against this script, so none is marked verified.
   target unchanged at 55 and no memory policy.
 - Also: `scripts/hibernate.sh dev` removes the landing-ui scalable target with the service, and wake restores
   both (hibernation destroys the services rather than scaling them to zero, so a floor of 1 cannot wake it).
+
+### 08.2 Prod's storefront renders on a whole vCPU [not verified]
+- Setup: the change on a branch; a `prod` plan (CI's plan job, or a CodeBuild `3-apply` in a prod account
+  with the plan read before apply).
+- Steps: read the plan for `<project>-prod-store-pod-<pod>-landing-ui`'s task definition; after the apply,
+  `aws ecs describe-task-definition` for it.
+- Expect: landing-ui's task goes 512 / 1024 → 1024 CPU / 2048 MB in prod and nowhere else (dev and staging keep
+  512 / 1024, ephemeral 256 / 512); console-ui's `ui` task is unchanged. Its scaling (2 to 12 at 55 % CPU) is
+  unchanged, so at 70 ms a page a task reaches its target near 8 page views a second instead of 4, and
+  saturates near 14 instead of 7.
 
 ## 09 — Spike capacity and the connection budget
 

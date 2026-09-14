@@ -26,6 +26,12 @@
 # on 2026-09-13, so a quarter vCPU saturates near 1.2 pages a second, and a 30-shopper load
 # test on dev held its task at 100 % with pages at 21–24 s. The console renders in the
 # browser and idled through the same test, so raising `ui` would pay for nothing.
+# After the render fixes and Node 24, a page still costs 70–73 ms of a Fargate vCPU (the
+# heavy spikes of 2026-09-14), so half a vCPU serves about 7 page views a second, and a
+# 500-shopper spike held one task at its cap for 2m15s with home's median at 42 s. Prod
+# takes a whole vCPU: twice the pages per task before the queue starts, and twice the
+# headroom while target tracking takes its minutes to add a task. Fargate pairs 1 vCPU with
+# 2 GB at least.
 #
 # `auth` is uaa's own size, half a vCPU in every flavour. A seller's sign-in is a bcrypt
 # password check, pure CPU: on dev, eight sign-ins a minute held uaa's quarter vCPU at 44 %
@@ -202,7 +208,7 @@ prod:
     medium:  { cpu: 1024, memory: 2048 }
     small:   { cpu: 512,  memory: 1024 }
     ui:      { cpu: 512,  memory: 1024 }
-    ssr:     { cpu: 512,  memory: 1024 }
+    ssr:     { cpu: 1024, memory: 2048 }
     auth:    { cpu: 512,  memory: 1024 }
   desired_count: 2
   # Scale out fast, scale in slowly. A minute of over-provisioning costs pennies;
