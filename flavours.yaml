@@ -26,6 +26,14 @@
 # on 2026-09-13, so a quarter vCPU saturates near 1.2 pages a second, and a 30-shopper load
 # test on dev held its task at 100 % with pages at 21–24 s. The console renders in the
 # browser and idled through the same test, so raising `ui` would pay for nothing.
+#
+# `auth` is uaa's own size, half a vCPU in every flavour. A seller's sign-in is a bcrypt
+# password check, pure CPU: on dev, eight sign-ins a minute held uaa's quarter vCPU at 44 %
+# with a p95 of 3.15 s, about 0.8 s of Fargate CPU each, and the production mix at 20x a
+# normal day held it at 61 % (load-testing docs/baseline.md, 2026-09-13 and -14). A quarter
+# vCPU is full at a handful of concurrent sign-ins, and a queue at the authorization server
+# stalls every console login behind it. Prod's `small` was already half a vCPU, so prod's
+# uaa does not change; `medium` would have doubled it there to 1 vCPU for nothing.
 
 dev:
   description: "Cheapest thing that runs the whole product. Not for anyone's data."
@@ -35,6 +43,7 @@ dev:
     small:   { cpu: 256, memory: 1024 }
     ui:      { cpu: 256, memory: 512 }
     ssr:     { cpu: 512, memory: 1024 }
+    auth:    { cpu: 512, memory: 1024 }
   desired_count: 1
   # No autoscaling below staging: one task, the cheapest thing that runs. The storefront
   # is the exception: landing-ui turns scaling on for itself (services.yaml).
@@ -111,6 +120,7 @@ staging:
     small:   { cpu: 256, memory: 1024 }
     ui:      { cpu: 512, memory: 1024 }
     ssr:     { cpu: 512, memory: 1024 }
+    auth:    { cpu: 512, memory: 1024 }
   desired_count: 1
   # Autoscaling on, cheaply — enough to prove the policy works before prod relies on it.
   autoscaling:
@@ -193,6 +203,7 @@ prod:
     small:   { cpu: 512,  memory: 1024 }
     ui:      { cpu: 512,  memory: 1024 }
     ssr:     { cpu: 512,  memory: 1024 }
+    auth:    { cpu: 512,  memory: 1024 }
   desired_count: 2
   # Scale out fast, scale in slowly. A minute of over-provisioning costs pennies;
   # flapping under a rising load costs requests. Request-count tracking leads CPU on
@@ -264,6 +275,8 @@ ephemeral:
     small:   { cpu: 256, memory: 1024 }
     ui:      { cpu: 256, memory: 512 }
     ssr:     { cpu: 256, memory: 512 }
+    # Even here: a demo is mostly people signing in, and a quarter vCPU makes each one wait.
+    auth:    { cpu: 512, memory: 1024 }
   desired_count: 1
   # Throwaway environments do not autoscale; they are destroyed instead. The storefront
   # still scales 1–3 on CPU (services.yaml, landing-ui), so a demo under load stays usable.

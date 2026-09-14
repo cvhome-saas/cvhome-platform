@@ -83,7 +83,9 @@ core:
     image: store-core/uaa
     database: true
     runtime: spring
-    size: small
+    # Its own size, half a vCPU everywhere: a sign-in is a bcrypt check. See `auth` in
+    # flavours.yaml.
+    size: auth
     # The authorization server: every client secret it verifies and the key that
     # signs its remember-me cookie. The key wrapping its signing keys at rest is the
     # layer's crypto key, which every Spring service receives.

@@ -6,7 +6,7 @@ The path an operator takes to stand up, change, pause and tear down a CVHome env
 - **Scope** — the bootstrap stack, the three CodeBuild stages, promotion by tfvars, hibernate/wake, destroy.
 - **Runs on** — a real AWS account and a Route53 hosted zone; eu-central-1 unless stated. Nothing here
   runs from an agent session (`AGENTS.md` → *Build, run and verify*).
-- **Cases** — 25 (0 verified, 25 not verified)
+- **Cases** — 27 (0 verified, 27 not verified)
 - **Also see** — `../cvhome/qa/lcl-qa.md` for the stack itself, `../cvhome/store-core/*/qa/*-qa.md` for the
   product flows to run once an environment is up; `README.md` here for the commands.
 
@@ -264,6 +264,21 @@ none was recorded against this script, so none is marked verified.
   target unchanged at 55 and no memory policy.
 - Also: `scripts/hibernate.sh dev` removes the landing-ui scalable target with the service, and wake restores
   both (hibernation destroys the services rather than scaling them to zero, so a floor of 1 cannot wake it).
+
+## 09 — Spike capacity and the connection budget
+
+What the 2026-09-14 heavy spikes asked of the platform (load-testing `docs/baseline.md` → *Heavy spikes*; the
+plan is cvhome-saas/orchestrator `.agents/plans/load-bottlenecks.md`).
+
+### 09.1 uaa runs on its own half-vCPU size in every flavour [not verified]
+- Setup: a `dev` environment applied from this change; `../load-testing` with its committed `aws.json`.
+- Steps: `aws ecs describe-task-definition` for `<project>-dev-store-core-uaa` (latest revision); plan
+  `staging`, `prod` and `ephemeral` from the same commit; then `TARGET=aws make gateway-login PROFILE=load`
+  (the seller sign-in journey) against dev, watching uaa's CPU in CloudWatch.
+- Expect: uaa's task is 512 CPU / 1024 MB in dev, staging and ephemeral (was 256 / 1024); the prod plan shows no
+  change to uaa's task. The other `small` services keep 256 / 1024 below prod. At eight sign-ins a minute uaa
+  stays near 22 % of its CPU (half the 44 % it read at a quarter vCPU) and the sign-in p95 falls below the
+  3.15 s of 2026-09-13.
 
 ## REG — regression watchlist
 
