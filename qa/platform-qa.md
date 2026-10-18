@@ -201,7 +201,8 @@ none was recorded against this script, so none is marked verified.
   put a new custom domain on a test store so Caddy asks Let's Encrypt for a certificate.
 - Expect: the log shows `terraform_data.nat_ready` printing "NAT instance i-… is forwarding." before any
   ECS service is updated; no task ENI has a public IP, and every task is in a private subnet; one
-  `<project>-dev-nat` t4g.nano with a public IP and source/dest check off; the private route table sends
+  `<project>-dev-nat` t4g.nano with a public IP and source/dest check off, whose system log has no
+  `Out of memory: Killed process … (dnf)` line; the private route table sends
   `0.0.0.0/0` to its ENI and has the S3 gateway endpoint; every service steady with no circuit-breaker
   rollback; console, storefront, webhook registration and the certificate all work, so image pulls,
   Secrets Manager, CloudWatch Logs, Cloud Map `DiscoverInstances`, Stripe and ACME are all getting out;
