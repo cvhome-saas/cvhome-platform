@@ -117,11 +117,104 @@ locals {
 
   docker_registry = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.region}.amazonaws.com/${var.project}"
 
+  # ------------------------------------------------------------ per-service values
+  #
+  # What a service takes from the flavour unless its catalog entry says otherwise,
+  # resolved once here and handed to the layer modules on the catalog entry itself. The
+  # connection budget below counts exactly the numbers the modules deploy, so both read
+  # them from this one place rather than each deriving its own.
+  #
+  #   db_pool_size  Hikari's pool per task: the service's own, else rds.db_pool_size.
+  #                 Zero for a service with no database, so a sum needs no filter.
+  #   scaling       the service's scaling policy: the flavour sets the environment's
+  #                 shape, the catalog overrides it where a service genuinely behaves
+  #                 differently. Resolved key by key rather than with merge(), so a service
+  #                 can override one target without restating the block, and an omitted
+  #                 optional target stays omitted rather than becoming null-versus-absent
+  #                 guesswork downstream.
+  #
+  # A service's ceiling is relative, so one that needs headroom gets it in proportion to
+  # the environment rather than dragging a prod-sized ceiling into staging: max_factor
+  # times the flavour's max. A service with a database scales from a lower base, the
+  # smaller of that max and rds.db_max_tasks, because every task it adds opens another
+  # pool on an instance whose connections do not grow. A base below the floor is the
+  # floor.
+  as_flavour = local.flavour.autoscaling
+
+  # Which services open a database connection at all, by layer.
+  database = {
+    for layer in ["core", "pod"] : layer => {
+      for name, svc in local.catalog[layer] : name => try(svc.database, false)
+    }
+  }
+
+  scaling = {
+    for layer in ["core", "pod"] : layer => {
+      for name, svc in local.catalog[layer] : name => {
+        enabled = try(svc.autoscaling.enabled, local.as_flavour.enabled)
+        min     = try(svc.autoscaling.min, local.as_flavour.min, local.flavour.desired_count)
+        max = ceil(
+          (local.database[layer][name] ? max(
+            try(svc.autoscaling.min, local.as_flavour.min, local.flavour.desired_count),
+            min(try(local.as_flavour.max, local.flavour.desired_count * 3), local.flavour.rds.db_max_tasks),
+          ) : try(local.as_flavour.max, local.flavour.desired_count * 3)) * try(svc.autoscaling.max_factor, 1)
+        )
+        cpu_target         = try(svc.autoscaling.cpu_target, local.as_flavour.cpu_target, null)
+        memory_target      = try(svc.autoscaling.memory_target, local.as_flavour.memory_target, null)
+        request_target     = try(svc.autoscaling.request_target, local.as_flavour.request_target, null)
+        scale_in_cooldown  = try(svc.autoscaling.scale_in_cooldown, local.as_flavour.scale_in_cooldown, 300)
+        scale_out_cooldown = try(svc.autoscaling.scale_out_cooldown, local.as_flavour.scale_out_cooldown, 60)
+        schedules          = try(svc.autoscaling.schedules, local.as_flavour.schedules, [])
+      }
+    }
+  }
+
+  # A schedule sets the same min and max on every service, so each is clamped to the
+  # service it lands on: never past the service's own ceiling, and never above a database
+  # service's floor. The calendar may lower a database service (to zero overnight, say)
+  # but not raise it, since the budget below counts every database task at its floor or
+  # its ceiling and a schedule's numbers are neither. A schedule without a max leaves
+  # every service its own ceiling, which is what raising a floor for an event wants.
+  services = {
+    for layer, scaled in local.scaling : layer => {
+      for name, sc in scaled : name => merge(local.catalog[layer][name], {
+        db_pool_size = local.database[layer][name] ? try(local.catalog[layer][name].db_pool_size, local.flavour.rds.db_pool_size) : 0
+        scaling = merge(sc, {
+          schedules = [
+            for sch in sc.schedules : merge(sch, {
+              min = min(sch.min, local.database[layer][name] ? sc.min : sc.max)
+              max = min(coalesce(try(sch.max, null), sc.max), sc.max)
+            })
+          ]
+        })
+      })
+    }
+  }
+
   # ------------------------------------------------------------ database connections
   #
-  # Every Spring service with a database holds up to db_pool_size connections per task,
-  # and a rolling deploy runs the old and the new task side by side. Where the default
-  # pod shares store-core's instance, both layers' pools land on it.
+  # Every Spring service with a database holds up to its db_pool_size connections per
+  # task. Where the default pod shares store-core's instance, both layers' pools land on
+  # it. A service's task count peaks one of two ways, and the budget takes the larger:
+  #
+  #   at its ceiling   autoscaling has added every task it may (scaling.max);
+  #   mid-deploy       a rolling deploy runs the old and the new tasks side by side, at
+  #                    the floor, since an apply resets desired_count to the floor
+  #                    (modules/ecs-service) and ECS then starts up to twice that.
+  #
+  # Where scaling is off, both are desired_count, and the peak is the deploy's doubling.
+  # A deploy forced by hand while a service sits at its ceiling can briefly open more;
+  # cvhome's three-second Hikari timeout turns that into quick errors, not a stall.
+  #
+  # With the flavours as written (pool x peak tasks, per instance):
+  #   dev, ephemeral  one shared db.t4g.micro, scaling off: every service at 1 task,
+  #                   2 mid-deploy. (ten services x 3 + catalog 8) x 2 = 76 of ~80.
+  #   staging         floor 1, database ceiling 2, catalog 4. Pod instance: catalog
+  #                   8 x 4 + six services x 6 x 2 = 104; core: four x 6 x 2 = 48. Of ~190.
+  #   prod            floor 2, database ceiling 2, catalog 4. Pod instance: catalog
+  #                   8 x max(4, 2x2) + six services x 6 x max(2, 2x2) = 32 + 144 = 176;
+  #                   core: four x 6 x 4 = 96. Of ~190. Before the ceiling, every service
+  #                   scaled to 12 tasks: 7 x 6 x 12 = 504 on one pod's instance.
   shared_database = local.flavour.rds.shared
 
   # What RDS for PostgreSQL allows, rounded down: LEAST(DBInstanceClassMemory/9531392,
@@ -133,17 +226,18 @@ locals {
     "db.t4g.medium" = 400
   }
 
-  db_services = {
-    core = length([for svc in values(local.catalog.core) : svc if try(svc.database, false)])
-    pod  = length([for svc in values(local.catalog.pod) : svc if try(svc.database, false)])
+  # Every database service in a layer at its peak task count, pools summed.
+  db_connections = {
+    for layer, services in local.services : layer => sum(concat([0], [
+      for svc in values(services) : svc.db_pool_size * max(
+        svc.scaling.enabled ? svc.scaling.max : local.flavour.desired_count,
+        2 * (svc.scaling.enabled ? svc.scaling.min : local.flavour.desired_count),
+      )
+    ]))
   }
 
-  # The busiest instance, mid-deploy, at the flavour's task floor.
-  db_connections_at_deploy = 2 * local.flavour.rds.db_pool_size * (
-    local.flavour.autoscaling.enabled ? try(local.flavour.autoscaling.min, local.flavour.desired_count) : local.flavour.desired_count
-    ) * (
-    local.shared_database ? local.db_services.core + local.db_services.pod : max(local.db_services.core, local.db_services.pod)
-  )
+  # The busiest instance.
+  db_connections_peak = local.shared_database ? local.db_connections.core + local.db_connections.pod : max(local.db_connections.core, local.db_connections.pod)
   db_connection_limit = lookup(local.db_connection_limits, local.flavour.rds.instance_class, null)
 }
 
@@ -179,11 +273,12 @@ resource "terraform_data" "guards" {
     }
     # Hikari's default pool of 10 once exhausted a t4g.micro mid-deploy, and tasks died
     # on "remaining connection slots are reserved" before passing a health check. One
-    # instance serving two layers makes that easier to reach, so it is checked here.
-    # Classes missing from db_connection_limits are not checked.
+    # instance serving two layers makes that easier to reach, and so does scaling out,
+    # since pools multiply by tasks and an instance's connections do not; both are
+    # counted here. Classes missing from db_connection_limits are not checked.
     precondition {
-      condition     = local.db_connection_limit == null || local.db_connections_at_deploy <= coalesce(local.db_connection_limit, 0)
-      error_message = "A rolling deploy would open ${local.db_connections_at_deploy} connections on one ${local.flavour.rds.instance_class}, which holds about ${coalesce(local.db_connection_limit, 0)}. Lower rds.db_pool_size or raise rds.instance_class in flavour_overrides."
+      condition     = local.db_connection_limit == null || local.db_connections_peak <= coalesce(local.db_connection_limit, 0)
+      error_message = "At their ceilings, or mid-deploy at their floors, the database services would open ${local.db_connections_peak} connections on one ${local.flavour.rds.instance_class}, which holds about ${coalesce(local.db_connection_limit, 0)}. Lower rds.db_pool_size (or a service's db_pool_size in services.yaml) or rds.db_max_tasks, or raise rds.instance_class in flavour_overrides."
     }
   }
 }
@@ -270,7 +365,7 @@ module "store_core" {
   env     = var.env
   region  = var.region
 
-  services       = local.catalog.core
+  services       = local.services.core
   otel_collector = local.catalog.infra["otel-collector"]
   flavour        = local.flavour
 
@@ -306,7 +401,7 @@ module "store_pod" {
   env     = var.env
   pod     = each.value
 
-  services = local.catalog.pod
+  services = local.services.pod
   flavour  = local.flavour
 
   domain         = local.app_domain

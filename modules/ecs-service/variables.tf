@@ -106,9 +106,11 @@ variable "autoscaling" {
                       application load balancer, and ignored without one, because it
                       needs the ALB and target group ARN suffixes to name the metric.
 
-    `schedules` sets min and max at fixed times — for known daily shape, not for
-    reacting to load. Scaling to zero overnight keeps the URL and the load balancer up
-    while paying for no tasks; hibernating takes those down too.
+    `schedules` sets min and max at fixed times — for known daily shape or a known
+    event, not for reacting to load. Scaling to zero overnight keeps the URL and the
+    load balancer up while paying for no tasks; hibernating takes those down too. The
+    root clamps each schedule to this service before it arrives here, so max is always
+    set.
   EOT
   type = object({
     enabled            = bool

@@ -18,7 +18,7 @@ variable "pod" {
 }
 
 variable "services" {
-  description = "The `pod` slice of services.yaml, passed through unchanged."
+  description = "The `pod` slice of services.yaml, each entry carrying the values the root resolved against the flavour (db_pool_size, scaling)."
   type        = any
 }
 
