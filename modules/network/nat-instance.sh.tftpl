@@ -10,6 +10,15 @@
 # forwarded packets, so the service starts first and the NAT rules go on top of it.
 set -euo pipefail
 
+# A t4g.nano has 512 MiB, and dnf loading the repository metadata outgrows it: the
+# OOM killer took dnf on the first dev apply and the instance never reported ready.
+# A swap file on the root volume carries the install; it stays for any later dnf run.
+dd if=/dev/zero of=/swapfile bs=1M count=1024 status=none
+chmod 600 /swapfile
+mkswap /swapfile
+swapon /swapfile
+echo '/swapfile none swap defaults 0 0' >> /etc/fstab
+
 dnf install -y iptables-services
 systemctl enable --now iptables
 
